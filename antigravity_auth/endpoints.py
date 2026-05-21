@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import random
 from typing import Any
 
 from .constants import ANTIGRAVITY_ENDPOINT_FALLBACKS, ANTIGRAVITY_ENDPOINT_PROD
@@ -125,19 +124,36 @@ class CapacityRetryTracker:
     return self._max_backoff_ms
 
 
-def select_endpoint(config=None):
-    """Select the Antigravity endpoint based on config.
+# Module-level endpoint provider — shared across all requests
+_endpoint_provider = EndpointProvider()
 
-    Returns one of: ANTIGRAVITY_ENDPOINT_DAILY, _AUTOPUSH, or _PROD.
-    Default is PROD unless config specifies a fallback strategy.
+
+def select_endpoint(config=None):
+    """Select the Antigravity endpoint based on config and health state.
+
+    Uses the EndpointProvider's fallback chain (daily → autopush → prod).
+    For ``gemini-cli`` header style, only production is returned.
+    Failed endpoints are skipped automatically.
 
     Args:
-        config: Optional Config dataclass instance. If None, returns PROD.
+        config: Optional Config dataclass instance.
     """
-    from .constants import (
-        ANTIGRAVITY_ENDPOINT_PROD,
-        ANTIGRAVITY_ENDPOINT_DAILY,
-        ANTIGRAVITY_ENDPOINT_AUTOPUSH,
-    )
-    # Default to prod for now — future: respect config.scheduling_mode
+    from .constants import ANTIGRAVITY_ENDPOINT_PROD
+
+    header_style = "gemini-cli" if (config is not None and config.cli_first) else "antigravity"
+    endpoints = _endpoint_provider.get_endpoints(header_style)
+    for endpoint in endpoints:
+        if not _endpoint_provider.is_failed(endpoint):
+            return endpoint
+    # All endpoints failed — return prod as last resort
     return ANTIGRAVITY_ENDPOINT_PROD
+
+
+def mark_endpoint_failed(endpoint: str) -> None:
+    """Mark an endpoint as failed so it is skipped in future requests."""
+    _endpoint_provider.mark_failed(endpoint)
+
+
+def reset_endpoint_failures() -> None:
+    """Clear all endpoint failure marks (e.g., after a period of stability)."""
+    _endpoint_provider.reset()
