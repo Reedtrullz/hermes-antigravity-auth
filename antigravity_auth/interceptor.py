@@ -129,10 +129,12 @@ class _AntigravityTransport:
         # --- Rewrite headers ---
         new_headers = build_antigravity_headers(header_style=header_style)
         raw_headers: list[tuple[bytes, bytes]] = []
-        for name, value in request.headers:
-            lower = name.lower()
-            if lower in (b"host", b"authorization", b"content-type", b"accept", b"accept-encoding"):
-                raw_headers.append((name, value))
+        for item in request.headers:
+            if isinstance(item, (tuple, list)) and len(item) >= 2:
+                name, value = item[0], item[1]
+                lower = name.lower() if isinstance(name, bytes) else name.encode().lower()
+                if lower in (b"host", b"authorization", b"content-type", b"accept", b"accept-encoding"):
+                    raw_headers.append((name, value))
         for key, val in new_headers.items():
             raw_headers.append((key.encode(), val.encode()))
 
