@@ -40,10 +40,10 @@ Install the hermes-antigravity-auth plugin for Hermes Agent by following the ins
 ### 1. Install the Python package
 
 ```bash
-pip install hermes-antigravity-auth
+pip install git+https://github.com/Reedtrullz/hermes-antigravity-auth.git
 ```
 
-Or from source:
+Or clone and install locally:
 
 ```bash
 git clone https://github.com/Reedtrullz/hermes-antigravity-auth.git
@@ -175,9 +175,9 @@ hermes -z "Hello" --provider antigravity --model claude-opus-4-6-thinking
 
 | Model | Alias | Thinking |
 |-------|-------|----------|
-| `gemini-3-pro` | `--provider ag` | low, high |
-| `gemini-3.1-pro` | `--provider ag` | low, high |
-| `gemini-3-flash` | `--provider ag` | minimal, low, medium, high |
+| `gemini-3-pro-preview` | `--provider ag` | low, high |
+| `gemini-3.1-pro-preview` | `--provider ag` | low, high |
+| `gemini-3-flash-preview` | `--provider ag` | minimal, low, medium, high |
 | `claude-sonnet-4-6` | `--provider ag` | — |
 | `claude-opus-4-6-thinking` | `--provider ag` | low, max |
 
@@ -210,20 +210,66 @@ plugins:
     - antigravity-cli
   entries:
     antigravity:
+      # --- Basic ---
       keep_thinking: false
       session_recovery: true
       cli_first: false
       debug: false
       quiet_mode: false
+
+      # --- Rate Limit Scheduling ---
+      scheduling_mode: cache_first       # cache_first | balance | performance_first
+      max_cache_first_wait_seconds: 60   # seconds to wait for cache-first
+      failure_ttl_seconds: 3600          # how long to remember failures
+
+      # --- Quota Protection ---
+      soft_quota_threshold_percent: 90   # rotate away at this % used
+      quota_refresh_interval_minutes: 15
+      quota_fallback: false              # use gemini-cli quota when ag exhausted
+
+      # --- Account Selection ---
+      account_selection_strategy: hybrid # sticky | hybrid | round-robin
+      pid_offset_enabled: false          # vary starting account per process
 ```
+
+### Basic Options
 
 | Option | Default | What it does |
 |--------|---------|--------------|
 | `keep_thinking` | `false` | Preserve Claude's thinking across turns |
 | `session_recovery` | `true` | Auto-recover from tool errors |
 | `cli_first` | `false` | Route Gemini models to Gemini CLI quota first |
-| `debug` | `false` | Enable debug file logging |
+| `debug` | `false` | Enable debug file logging to `~/.hermes/logs/antigravity/` |
 | `quiet_mode` | `false` | Suppress notifications |
+
+### Scheduling
+
+Controls how the plugin waits when accounts are rate-limited.
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `scheduling_mode` | `cache_first` | `cache_first`: wait for the preferred account. `balance`: rotate immediately. `performance_first`: prefer fastest account |
+| `max_cache_first_wait_seconds` | `60` | Max seconds to wait in `cache_first` mode before rotating |
+| `failure_ttl_seconds` | `3600` | How long a failed account is avoided before retrying |
+
+### Quota Protection
+
+Prevents accounts from hitting hard rate limits by rotating away before exhaustion.
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `soft_quota_threshold_percent` | `90` | Rotate to next account when this % of quota is used |
+| `quota_refresh_interval_minutes` | `15` | How often to refresh quota counters from Google |
+| `quota_fallback` | `false` | When Antigravity quota is exhausted, fall back to Gemini CLI quota |
+
+### Account Selection
+
+Controls which account is picked from the multi-account pool.
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `account_selection_strategy` | `hybrid` | `sticky`: keep using the same account. `round-robin`: rotate evenly. `hybrid`: sticky until rate-limited, then rotate |
+| `pid_offset_enabled` | `false` | When `true`, parallel Hermes processes start at different accounts — prevents all processes hammering the same account |
 
 ### Environment Variables
 
@@ -254,6 +300,15 @@ hermes antigravity check       # Check quota status
 
 ---
 
+## Documentation
+
+| Doc | Covers |
+|-----|--------|
+| [Architecture Guide](docs/ARCHITECTURE.md) | Plugin structure, request flow, endpoint fallback chain, account rotation logic |
+| [Antigravity API Spec](docs/ANTIGRAVITY_API_SPEC.md) | Reverse-engineered Antigravity API reference — request envelope, headers, SSE format |
+
+---
+
 ## Troubleshooting
 
 > **Quick Reset**: Delete `~/.hermes/antigravity-accounts.json` and re-authenticate.
@@ -269,7 +324,17 @@ hermes antigravity check       # Check quota status
 
 ### Model Not Found
 
-If Hermes doesn't find the model provider, verify the plugin is installed:
+**"Model not found" or HTTP 404**: Gemini models at the Cloud Code endpoint require the `-preview` suffix.
+
+```bash
+# ✅ Correct
+hermes -z "Hello" --provider ag --model gemini-3-flash-preview
+
+# ❌ Broken — missing -preview suffix
+hermes -z "Hello" --provider ag --model gemini-3-flash
+```
+
+If Hermes doesn't see the antigravity provider at all, verify the plugin is installed:
 
 ```bash
 ls ~/.hermes/plugins/model-providers/antigravity/
@@ -299,6 +364,12 @@ If a session errors out:
 ```bash
 continue  # triggers auto-recovery
 ```
+
+### Known Limitations
+
+**Claude models** (`claude-opus-4-6-thinking`, `claude-sonnet-4-6`) are listed in the model picker but may return 404 through the basic `--provider ag` path. These models require the Antigravity transform middleware (custom headers, request wrapping) that the `hermes antigravity` CLI plugin provides. Full Claude support depends on Hermes' model-provider plugin architecture — the model names are registered for forward compatibility.
+
+**Model name suffixes**: All Gemini models at the Cloud Code endpoint require the `-preview` suffix (e.g., `gemini-3-flash-preview`). The non-preview names (`gemini-3-flash`) were retired by Google. See [Model Not Found](#model-not-found) above.
 
 ---
 

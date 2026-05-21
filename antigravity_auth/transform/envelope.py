@@ -37,6 +37,9 @@ MODEL_NAME_MAP: dict[str, str] = {
     "antigravity-gemini-3-flash": "gemini-3-flash-preview",
     "antigravity-claude-sonnet-4-6": "claude-sonnet-4-6",
     "antigravity-claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
+    "gemini-3-pro-preview": "gemini-3-pro-preview",
+    "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview": "gemini-3-flash-preview",
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-pro": "gemini-2.5-pro",
 }

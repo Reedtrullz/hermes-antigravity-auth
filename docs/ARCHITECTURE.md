@@ -72,7 +72,7 @@ Typical usage:
 
 ```bash
 hermes -z "Hello" --provider antigravity --model claude-opus-4-6-thinking
-hermes -z "Hello" --provider ag --model gemini-3.1-pro
+hermes -z "Hello" --provider ag --model gemini-3.1-pro-preview
 ```
 
 ---
@@ -168,7 +168,7 @@ Then run:
 
 ```bash
 hermes antigravity check
-hermes -z "Hello" --provider antigravity --model gemini-3.1-pro
+hermes -z "Hello" --provider antigravity --model gemini-3.1-pro-preview
 ```
 
 Check the Hermes home directory for account and auth state:

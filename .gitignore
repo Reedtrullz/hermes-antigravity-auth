@@ -1,45 +1,3 @@
-# dependencies
-node_modules
-
-# output
-out
-dist
-*.tgz
-
-# code coverage
-coverage
-*.lcov
-
-# logs
-logs
-_.log
-report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
-antigravity-debug-*.log
-
-# dotenv environment variable files
-.env
-.env.development.local
-.env.test.local
-.env.production.local
-.env.local
-
-# caches
-.eslintcache
-.cache
-*.tsbuildinfo
-
-# IntelliJ based IDEs
-.idea
-
-# Finder (MacOS) folder config
-.DS_Store
-
-# Hive workflow internal files
-.hive/
-
-# Test artifacts
-test-file.ts
-
 # Python
 __pycache__/
 *.pyc
@@ -50,14 +8,27 @@ dist/
 build/
 .pytest_cache/
 
+# Local credentials
+antigravity_auth/_credentials.py
+
+# Environment
+.env
+.env.*.local
+
+# IDE
+.idea
+.DS_Store
+
+# Logs
+*.log
+antigravity-debug-*.log
+
+# Coverage
+coverage
+*.lcov
+
 # Sisyphus working files
 .sisyphus/
 
-# Local credentials (OAuth client ID/secret)
-antigravity_auth/_credentials.py
-
-# Local subrepos (not part of this project)
-CLIProxyAPI/
-LLM-API-Key-Proxy/
-opencode/
-opencode-better-antigravity-auth/
+# Legacy (original TypeScript project)
+node_modules/
