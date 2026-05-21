@@ -133,13 +133,15 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
     - Preview access errors → rewrite to clearer messages
     - Non-200 responses with Antigravity error envelopes
     """
+    # Load config once — used by multiple blocks below
+    from .config import get_config
+    config = get_config()
+
     # --- Token refresh on 401 ---
     if response.status_code == 401:
         from .token import refresh_access_token
         from .storage import load_accounts
-        from .config import get_config
 
-        config = get_config()
         if config.proactive_token_refresh:
             accounts_data = load_accounts()
             active_idx = accounts_data.get("activeIndex", 0)
@@ -244,9 +246,7 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
 
     # --- Session recovery: detect recoverable errors ---
     from .recovery import detect_error_type, is_recoverable_error
-    from .config import get_config
 
-    config = get_config()
     if config.session_recovery:
       # Check for recoverable errors in the response
       error_obj = inner.get("error") if isinstance(inner, dict) else None
