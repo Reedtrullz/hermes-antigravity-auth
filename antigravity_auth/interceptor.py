@@ -64,7 +64,7 @@ class _AntigravityTransport:
             url_str = str(request.url) if hasattr(request, 'url') else ""
             
             # Only intercept Cloud Code requests
-            if "cloudcode-pa.googleapis.com" not in (request.url.host or ""):
+            if "cloudcode-pa.googleapis.com" not in str(request.url.host or ""):
                 return self._original.handle_request(request)
 
             # Read the body from the stream iterator (consumes it)
