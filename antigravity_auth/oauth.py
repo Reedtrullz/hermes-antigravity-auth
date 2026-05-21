@@ -4,6 +4,7 @@ import base64
 import json
 import time
 import sys
+import gzip
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
@@ -88,13 +89,20 @@ def authorize_antigravity(project_id: str = "") -> dict:
         "project_id": project_id or "",
     }
 
+def _decompress(body: bytes, response) -> bytes:
+    encoding = response.headers.get("Content-Encoding", "")
+    if "gzip" in encoding:
+        return gzip.decompress(body)
+    return body
+
+
 def make_post_request(url: str, headers: dict, data: bytes, timeout: int = 10) -> tuple[int, bytes]:
     req = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.status, response.read()
+            return response.status, _decompress(response.read(), response)
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, _decompress(e.read(), e)
     except Exception as e:
         return 500, str(e).encode("utf-8")
 
@@ -102,9 +110,9 @@ def make_get_request(url: str, headers: dict, timeout: int = 10) -> tuple[int, b
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.status, response.read()
+            return response.status, _decompress(response.read(), response)
     except urllib.error.HTTPError as e:
-        return e.code, e.read()
+        return e.code, _decompress(e.read(), e)
     except Exception as e:
         return 500, str(e).encode("utf-8")
 
