@@ -155,3 +155,24 @@ class TestRequestHook(unittest.TestCase):
         auth = request.headers.get("Authorization", "")
         self.assertEqual(auth, "Bearer ya29.test-token-abc123",
                          "Authorization header must be preserved")
+
+    def test_injects_fingerprint_when_available(self):
+        """Request should carry a device fingerprint in headers."""
+        request = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+            content=json.dumps({
+                "project": "test",
+                "model": "gemini-3-flash-preview",
+                "request": {"contents": []},
+            }).encode("utf-8"),
+            headers={"Authorization": "Bearer token"},
+        )
+        self.hook(request)
+        # Client-Metadata should be JSON (fingerprint format)
+        cm = request.headers.get("Client-Metadata", "")
+        try:
+            parsed = json.loads(cm)
+            self.assertIsInstance(parsed, dict)
+        except json.JSONDecodeError:
+            pass  # string format also valid

@@ -119,6 +119,20 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     for key, val in new_headers.items():
         request.headers[key] = val
 
+    # --- Inject per-request device fingerprint ---
+    try:
+        from .fingerprint import generate_fingerprint
+        fingerprint = generate_fingerprint()
+        if fingerprint:
+            fp_ua = fingerprint.get("userAgent")
+            if fp_ua and isinstance(fp_ua, str):
+                request.headers["User-Agent"] = fp_ua
+            fp_meta = fingerprint.get("clientMetadata")
+            if fp_meta:
+                request.headers["Client-Metadata"] = json.dumps(fp_meta)
+    except Exception:
+        pass  # fingerprint is cosmetic — never block the request
+
     logger.debug("Transformed request to Antigravity envelope for model=%s", model)
 
 
