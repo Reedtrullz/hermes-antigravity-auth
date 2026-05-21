@@ -338,14 +338,44 @@ def check_quotas_and_verify():
     print("=" * 60)
     for idx, acc in enumerate(accounts):
         email = acc.get("email", "Unknown")
-        project_id = acc.get("projectId") or "<none>"
-        print(f"[{idx}] {email} (Project: {project_id}) -> Verifying refresh capability...")
-        
+        project_id = acc.get("projectId") or ""
+
         refresh_token = acc.get("refreshToken", "")
-        if refresh_token:
-            print("    Status: OK (Active)")
+        if not refresh_token:
+            print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (Missing credentials)")
+            continue
+
+        # Refresh access token
+        try:
+            from .token import refresh_access_token
+            refreshed = refresh_access_token({"refresh": refresh_token})
+            access_token = refreshed.get("access", "")
+        except Exception:
+            print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (Token refresh error)")
+            continue
+
+        if not access_token:
+            print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (No access token)")
+            continue
+
+        # Fetch live quota from Antigravity API
+        from .accounts.quota import fetch_quota_from_api
+        quota = fetch_quota_from_api(access_token, project_id)
+
+        if quota is None:
+            print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> Token valid, quota fetch failed")
+            continue
+
+        print(f"[{idx}] {email} (Project: {project_id or '<none>'})")
+        if isinstance(quota, dict):
+            for group_name, group_data in quota.items():
+                if not isinstance(group_data, dict):
+                    continue
+                used = group_data.get("used", "?")
+                limit = group_data.get("limit", "?")
+                print(f"    {group_name}: {used}/{limit} used")
         else:
-            print("    Status: FAILED (Missing credentials)")
+            print(f"    Raw response: {quota}")
     print("=" * 60)
 
 
