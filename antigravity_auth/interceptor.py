@@ -154,6 +154,32 @@ def _response_hook(response: httpx.Response) -> None:
         except Exception as e:
             logger.warning("Token refresh failed: %s", e)
 
+    if response.status_code == 403:
+        # Account is ineligible (shadow-banned) — mark for cooldown and rotate
+        try:
+            from .accounts.manager import AccountManager
+            mgr = AccountManager.load_from_disk()
+            active = mgr.get_current_account_for_family("gemini")
+            if active:
+                import time
+                active.cooling_down_until = (time.time() + 86400) * 1000  # 24h cooldown
+                active.cooldown_reason = "auth-failure"
+                mgr.save_to_disk()
+                next_acc = mgr.get_current_or_next_for_family("gemini", strategy="hybrid")
+                if next_acc and next_acc.index != active.index:
+                    from .token import refresh_access_token
+                    from .cli import sync_token_to_google_oauth
+                    r = refresh_access_token({"refresh": next_acc.refresh_parts.refresh_token})
+                    if r.get("access"):
+                        sync_token_to_google_oauth(
+                            access_token=r["access"], refresh_token=next_acc.refresh_parts.refresh_token,
+                            project_id=next_acc.refresh_parts.project_id or "", email=next_acc.email,
+                            expires_ms=r.get("expires"),
+                        )
+                        logger.info("Rotated to %s after 403 ineligible account", next_acc.email)
+        except Exception as e:
+            logger.warning("403 handler error: %s", e)
+
     if response.status_code == 429 and config.switch_on_first_rate_limit:
         try:
             from .accounts.manager import AccountManager
