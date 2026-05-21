@@ -21,3 +21,28 @@ def register(ctx):
     install_interceptor()
   except Exception:
     pass  # non-fatal — plugin still works for CLI commands
+
+  # Register pre_api_request hook for session recovery
+  try:
+    import logging
+    _recovery_logger = logging.getLogger(__name__)
+
+    from .recovery import is_recoverable_error, detect_error_type
+    from .recovery import get_recovery_toast_content
+
+    def _on_pre_api_request(**kwargs):
+      error = kwargs.get("error")
+      if error and is_recoverable_error(error):
+        error_type = detect_error_type(error)
+        toast = get_recovery_toast_content(error_type)
+        _recovery_logger.info("Recovery needed: %s", error_type)
+        return {
+          "recovery_needed": True,
+          "error_type": error_type,
+          "toast": toast,
+        }
+      return None
+
+    ctx.register_hook("pre_api_request", _on_pre_api_request)
+  except Exception:
+    pass

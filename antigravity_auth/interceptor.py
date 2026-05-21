@@ -159,6 +159,18 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
             new_content = json.dumps(body).encode("utf-8")
             response._content = new_content
 
+    # --- Session recovery: detect recoverable errors ---
+    from .recovery import detect_error_type, is_recoverable_error
+    from .config import get_config
+
+    config = get_config()
+    if config.session_recovery:
+      # Check for recoverable errors in the response
+      error_obj = inner.get("error") if isinstance(inner, dict) else None
+      if error_obj and is_recoverable_error(error_obj):
+        error_type = detect_error_type(error_obj)
+        logger.info("Detected recoverable error: %s", error_type)
+
     logger.debug("Antigravity response processed: %s", response.status_code)
 
 
