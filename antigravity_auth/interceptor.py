@@ -133,6 +133,42 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
     - Preview access errors → rewrite to clearer messages
     - Non-200 responses with Antigravity error envelopes
     """
+    # --- Token refresh on 401 ---
+    if response.status_code == 401:
+        from .token import refresh_access_token
+        from .storage import load_accounts
+        from .config import get_config
+
+        config = get_config()
+        if config.proactive_token_refresh:
+            accounts_data = load_accounts()
+            active_idx = accounts_data.get("activeIndex", 0)
+            accounts = accounts_data.get("accounts", [])
+
+            if 0 <= active_idx < len(accounts):
+                acc = accounts[active_idx]
+                refresh = acc.get("refreshToken", "")
+                if refresh:
+                    try:
+                        refreshed = refresh_access_token({"refresh": refresh})
+                        new_token = refreshed.get("access", "")
+                        if new_token:
+                            # Sync to Hermes' OAuth store so next request gets fresh token
+                            try:
+                                from .cli import sync_token_to_google_oauth
+                                sync_token_to_google_oauth(
+                                    access_token=new_token,
+                                    refresh_token=refresh,
+                                    project_id=acc.get("projectId", ""),
+                                    email=acc.get("email"),
+                                    expires_ms=refreshed.get("expires"),
+                                )
+                            except Exception:
+                                pass  # sync is best-effort
+                            logger.info("Token refreshed after 401 for %s", acc.get("email"))
+                    except Exception as exc:
+                        logger.warning("Token refresh failed after 401: %s", exc)
+
     from .transform.response import rewrite_preview_access_error
 
     if not response.is_success:
