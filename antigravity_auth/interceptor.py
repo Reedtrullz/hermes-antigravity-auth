@@ -78,8 +78,43 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
 
 
 def _antigravity_response_hook(response: httpx.Response) -> None:
-    """Unwrap Antigravity response envelope back to Gemini-native format."""
-    logger.debug("Antigravity response hook fired: %s", response.status_code)
+    """Handle Antigravity-specific response quirks.
+
+    The Antigravity response envelope {"response": {"candidates": [...]}}
+    is already handled by _translate_gemini_response's inner-unwrap logic
+    in Hermes' gemini_cloudcode_adapter.py.
+
+    This hook handles:
+    - Preview access errors → rewrite to clearer messages
+    - Non-200 responses with Antigravity error envelopes
+    """
+    from .transform.response import rewrite_preview_access_error
+
+    if not response.is_success:
+        return
+
+    try:
+        body = json.loads(response.content)
+    except (json.JSONDecodeError, TypeError):
+        return
+
+    if not isinstance(body, dict):
+        return
+
+    # Check for Antigravity-specific error patterns inside the response envelope
+    response_inner = body.get("response")
+    inner: dict[str, Any] = response_inner if isinstance(response_inner, dict) else body
+    error: dict[str, Any] | None = inner.get("error") if isinstance(inner.get("error"), dict) else None
+
+    if error is not None:
+        # Rewrite preview access errors to more actionable messages
+        rewritten = rewrite_preview_access_error(inner, response.status_code, None)
+        if rewritten is not None:
+            inner["error"] = rewritten.get("error", inner.get("error", {}))
+            new_content = json.dumps(body).encode("utf-8")
+            response._content = new_content
+
+    logger.debug("Antigravity response processed: %s", response.status_code)
 
 
 def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
