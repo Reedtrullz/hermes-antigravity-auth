@@ -73,8 +73,8 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     if new_url != old_url:
         request.url = httpx.URL(new_url)
 
-    # Replace the body
-    request.content = json.dumps(envelope).encode("utf-8")
+    # Replace the body (httpx 0.28 Request.content is read-only — use _content)
+    request._content = json.dumps(envelope).encode("utf-8")
 
     # --- Strip Claude thinking blocks when keep_thinking=False ---
     from .transform.thinking import strip_all_thinking_blocks
@@ -85,7 +85,7 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         if isinstance(inner, dict) and "contents" in inner:
             strip_all_thinking_blocks(inner["contents"])
             # Re-serialize after stripping
-            request.content = json.dumps(envelope).encode("utf-8")
+            request._content = json.dumps(envelope).encode("utf-8")
 
     # --- Sanitize tool schemas when claude_tool_hardening enabled ---
     from .transform.schema import clean_json_schema
@@ -105,7 +105,7 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
                     # OpenAI format: tools have parameters directly
                     elif "parameters" in tool:
                         tool["parameters"] = clean_json_schema(tool["parameters"])
-            request.content = json.dumps(envelope).encode("utf-8")
+            request._content = json.dumps(envelope).encode("utf-8")
 
     # Replace headers with randomized Antigravity headers
     new_headers = build_antigravity_headers(header_style=header_style)
