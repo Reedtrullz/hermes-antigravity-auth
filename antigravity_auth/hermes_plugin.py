@@ -46,3 +46,10 @@ def register(ctx):
     ctx.register_hook("pre_api_request", _on_pre_api_request)
   except Exception:
     pass
+
+  # Register Antigravity tools (search, etc.)
+  try:
+    from .tools import register_tools
+    register_tools()
+  except Exception:
+    pass
