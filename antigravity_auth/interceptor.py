@@ -169,6 +169,53 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                     except Exception as exc:
                         logger.warning("Token refresh failed after 401: %s", exc)
 
+    # --- Account rotation on rate limit ---
+    if response.status_code == 429:
+        from .accounts.manager import AccountManager
+        from .accounts.ratelimit import mark_rate_limited
+        from .accounts.state import ModelFamily, HeaderStyle
+        from .config import get_config
+
+        config = get_config()
+        manager = AccountManager.load_from_disk()
+        active = manager.get_current_account_for_family("gemini")
+        if active:
+            # Extract retry-after from response headers or use config default
+            retry_after_seconds = config.default_retry_after_seconds
+            retry_after_hdr = response.headers.get("Retry-After") or response.headers.get("retry-after")
+            if retry_after_hdr:
+                try:
+                    retry_after_seconds = int(retry_after_hdr)
+                except ValueError:
+                    pass
+            retry_after_ms = float(retry_after_seconds * 1000)
+
+            mark_rate_limited(active, retry_after_ms, "gemini", "antigravity")
+            logger.warning("Rate limited on account %s", active.email)
+
+            if config.switch_on_first_rate_limit:
+                next_acc = manager.get_current_or_next_for_family(
+                    "gemini", strategy="hybrid",
+                )
+                if next_acc and next_acc.index != active.index:
+                    try:
+                        from .token import refresh_access_token
+                        refreshed = refresh_access_token(
+                            {"refresh": next_acc.refresh_parts.refresh_token}
+                        )
+                        access_token = refreshed.get("access", "")
+                        from .cli import sync_token_to_google_oauth
+                        sync_token_to_google_oauth(
+                            access_token=access_token,
+                            refresh_token=next_acc.refresh_parts.refresh_token,
+                            project_id=next_acc.refresh_parts.project_id or "",
+                            email=next_acc.email,
+                            expires_ms=refreshed.get("expires"),
+                        )
+                        logger.info("Rotated to account %s after rate limit", next_acc.email)
+                    except Exception as exc:
+                        logger.warning("Account rotation failed: %s", exc)
+
     from .transform.response import rewrite_preview_access_error
 
     if not response.is_success:
