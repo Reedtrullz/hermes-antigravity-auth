@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import json
 import time
+import gzip
 from urllib.error import HTTPError
 from unittest.mock import patch, MagicMock
 
@@ -185,6 +186,54 @@ class TestToken(unittest.TestCase):
         active = get_active_token_from_auth_json()
         self.assertEqual(active["access_token"], "")
         self.assertEqual(active["refresh_token"], "")
+
+    @patch("urllib.request.urlopen")
+    def test_refresh_access_token_gzipped_response(self, mock_urlopen):
+        # Create gzipped response body
+        response_data = {
+            "access_token": "gzipped_access_token",
+            "expires_in": 3600,
+            "refresh_token": "gzipped_refresh_token"
+        }
+        json_bytes = json.dumps(response_data).encode("utf-8")
+        gzipped_body = gzip.compress(json_bytes)
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = gzipped_body
+        mock_response.headers = {"Content-Encoding": "gzip"}
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        accounts_data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "test@example.com",
+                    "refreshToken": "old_refresh_123",
+                    "projectId": "proj_abc",
+                }
+            ]
+        }
+        save_accounts(accounts_data)
+
+        auth = {
+            "refresh": "old_refresh_123|proj_abc",
+            "access": "old_access",
+            "expires": 0,
+            "email": "test@example.com",
+        }
+
+        updated_auth = refresh_access_token(auth)
+        self.assertEqual(updated_auth["access"], "gzipped_access_token")
+        self.assertEqual(updated_auth["refresh"], "gzipped_refresh_token|proj_abc")
+        self.assertTrue(updated_auth["expires"] > int(time.time() * 1000))
+
+        loaded = load_accounts()
+        self.assertEqual(loaded["accounts"][0]["refreshToken"], "gzipped_refresh_token")
+
+        active = get_active_token_from_auth_json()
+        self.assertEqual(active["access_token"], "gzipped_access_token")
+        self.assertEqual(active["refresh_token"], "gzipped_refresh_token|proj_abc")
 
 
 if __name__ == "__main__":

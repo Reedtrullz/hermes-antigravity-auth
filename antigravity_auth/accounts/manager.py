@@ -6,7 +6,8 @@ import threading
 import time
 from typing import Any
 
-from ..constants import ANTIGRAVITY_ACCOUNTS_FILE, ANTIGRAVITY_DEFAULT_PROJECT_ID
+from ..constants import ANTIGRAVITY_DEFAULT_PROJECT_ID
+from ..storage import get_accounts_json_path
 from .ratelimit import (
     clear_expired_rate_limits,
     get_quota_key,
@@ -44,11 +45,11 @@ def _clamp_non_negative_int(value: Any, fallback: int) -> int:
 
 def _read_accounts_file() -> dict[str, Any] | None:
   """Read accounts storage from the antigravity-accounts.json file."""
-  path = os.path.expanduser(ANTIGRAVITY_ACCOUNTS_FILE)
-  if not os.path.exists(path):
+  path = get_accounts_json_path()
+  if not path.exists():
     return None
   try:
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
       return json.load(f)
   except (json.JSONDecodeError, IOError):
     return None
@@ -56,18 +57,18 @@ def _read_accounts_file() -> dict[str, Any] | None:
 
 def _write_accounts_file(data: dict[str, Any]) -> bool:
   """Atomically write accounts storage to disk."""
-  path = os.path.expanduser(ANTIGRAVITY_ACCOUNTS_FILE)
-  temp_path = path + ".tmp"
+  path = get_accounts_json_path()
+  temp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
   try:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(temp_path, "w") as f:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(temp_path, "w", encoding="utf-8") as f:
       json.dump(data, f, indent=2)
     os.replace(temp_path, path)
     return True
   except (IOError, OSError):
     try:
-      if os.path.exists(temp_path):
-        os.unlink(temp_path)
+      if temp_path.exists():
+        temp_path.unlink()
     except OSError:
       pass
     return False
@@ -238,14 +239,16 @@ class AccountManager:
                                   soft_quota_threshold_percent, soft_quota_cache_ttl_ms)
 
     # Sticky (default) strategy
-    if pid_offset_enabled and not self._session_offset_applied.get(family, False) and len(self._accounts) > 1:
-      import os as _os
-      pid = _os.getpid()
-      pid_offset = pid % len(self._accounts)
-      base_index = self._current_account_by_family.get(family, 0)
-      new_index = (base_index + pid_offset) % len(self._accounts)
-      self._current_account_by_family[family] = new_index
-      self._session_offset_applied[family] = True
+    if pid_offset_enabled and len(self._accounts) > 1:
+        with self._lock:
+            if not self._session_offset_applied.get(family, False):
+                import os as _os
+                pid = _os.getpid()
+                pid_offset = pid % len(self._accounts)
+                base_index = self._current_account_by_family.get(family, 0)
+                new_index = (base_index + pid_offset) % len(self._accounts)
+                self._current_account_by_family[family] = new_index
+                self._session_offset_applied[family] = True
 
     current = self.get_current_account_for_family(family)
     if current:
@@ -482,17 +485,20 @@ class AccountManager:
 
   def _request_save_to_disk(self) -> None:
     with self._lock:
-      if self._save_pending:
-        return
+      if self._save_timer is not None:
+        self._save_timer.cancel()
+        self._save_timer = None
       self._save_pending = True
 
     def _do_save():
       self.save_to_disk()
       with self._lock:
         self._save_pending = False
+        self._save_timer = None
 
     timer = threading.Timer(SAVE_DEBOUNCE_MS / 1000, _do_save)
     timer.daemon = True
+    self._save_timer = timer
     timer.start()
 
   # ========== Quota Cache ==========
@@ -546,17 +552,8 @@ class AccountManager:
     cache_ttl_ms: float,
     model: str | None = None,
   ) -> bool:
-    """Simplified quota check - does not require cached_quota to exist."""
-    if threshold_percent >= 100:
-      return False
-    if not account.cached_quota:
-      return False
-    if account.cached_quota_updated_at is None:
-      return False
-    age = _now_ms() - account.cached_quota_updated_at
-    if age > cache_ttl_ms:
-      return False
-    return False  # Fresh cache, not over quota by default
+    """Simplified quota check - uses same logic as _is_over_soft_quota."""
+    return self._is_over_soft_quota(account, family, threshold_percent, cache_ttl_ms, model)
 
   # ========== Health Tracker ==========
 

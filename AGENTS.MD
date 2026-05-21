@@ -85,6 +85,8 @@ Per-account device fingerprints stored in `antigravity-accounts.json`. Each fing
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Detailed architecture guide
 - [docs/ANTIGRAVITY_API_SPEC.md](docs/ANTIGRAVITY_API_SPEC.md) — Antigravity API reference
 - [antigravity_auth/AGENTS.md](antigravity_auth/AGENTS.md) — Python module deep-dive
+- [antigravity_auth/accounts/AGENTS.md](antigravity_auth/accounts/AGENTS.md) — Multi-account management
+- [antigravity_auth/transform/AGENTS.md](antigravity_auth/transform/AGENTS.md) — Request/response transform
 
 ## Testing
 

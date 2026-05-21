@@ -6,7 +6,7 @@ from typing import Any
 
 
 SYNTHETIC_THINKING_PLACEHOLDER = "[Thinking preserved]\n"
-DEBUG_MESSAGE_PREFIX = "[opencode-antigravity-auth debug]"
+DEBUG_MESSAGE_PREFIX = "[hermes-antigravity-auth debug]"
 ANTIGRAVITY_PREVIEW_LINK = "https://goo.gle/enable-preview-features"
 
 

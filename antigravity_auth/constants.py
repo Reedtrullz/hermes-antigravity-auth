@@ -5,14 +5,19 @@ import sys
 # These are public OAuth 2.0 client credentials for a desktop application type.
 # They are embedded here for convenience but can be overridden via environment
 # variables for custom deployments.
-try:
-    from ._credentials import (  # type: ignore  # noqa: F811
-        ANTIGRAVITY_CLIENT_ID,
-        ANTIGRAVITY_CLIENT_SECRET,
-    )
-except ImportError:
+# Environment variables take priority over _credentials.py
+if "ANTIGRAVITY_CLIENT_ID" in os.environ:
     ANTIGRAVITY_CLIENT_ID = os.environ.get("ANTIGRAVITY_CLIENT_ID", "")
     ANTIGRAVITY_CLIENT_SECRET = os.environ.get("ANTIGRAVITY_CLIENT_SECRET", "")
+else:
+    try:
+        from ._credentials import (  # type: ignore  # noqa: F811
+            ANTIGRAVITY_CLIENT_ID,
+            ANTIGRAVITY_CLIENT_SECRET,
+        )
+    except ImportError:
+        ANTIGRAVITY_CLIENT_ID = ""
+        ANTIGRAVITY_CLIENT_SECRET = ""
 
 ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback"
 

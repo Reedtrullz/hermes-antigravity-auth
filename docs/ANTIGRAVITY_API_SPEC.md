@@ -336,7 +336,7 @@ The underlying API uses these tool formats:
 { "type": { "enum": ["email"] } }
 ```
 
-**Note:** The plugin automatically handles these conversions via the `schema-transform.ts` module.
+**Note:** The plugin automatically handles these conversions via `antigravity_auth/transform/schema.py`.
 
 ---
 

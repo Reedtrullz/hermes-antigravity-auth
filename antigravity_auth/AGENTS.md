@@ -54,3 +54,8 @@ python3 -m pytest -k "test_name_pattern"                      # Filtered
 - Python >= 3.11 (no f-string backslashes, modern setuptools)
 - `pyyaml` (optional — for YAML config)
 - `pytest`, `pytest-cov` (dev)
+
+## Submodule Guidance
+
+- [accounts/AGENTS.md](accounts/AGENTS.md) — Multi-account management, quota, rotation
+- [transform/AGENTS.md](transform/AGENTS.md) — Messages, schema, envelope, response pipeline

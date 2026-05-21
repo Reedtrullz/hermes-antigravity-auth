@@ -102,9 +102,10 @@ All configuration options for `config.yaml` under `plugins.entries.antigravity`:
 
 | Variable | Overrides |
 |----------|-----------|
-| `HERMES_CONFIG_DIR` | Custom config directory |
-| `ANTIGRAVITY_DEBUG` | Enable debug logging (`1` = basic, `2` = verbose) |
-| `ANTIGRAVITY_DEBUG_TUI` | Enable TUI debug output |
+| `HERMES_HOME` | Custom Hermes home directory |
+| `HERMES_ANTIGRAVITY_DEBUG` | Enable debug file logging |
+| `HERMES_ANTIGRAVITY_DEBUG_TUI` | Enable debug output in Hermes UI integrations |
+| `HERMES_ANTIGRAVITY_QUIET` | Suppress Antigravity status output |
 
 ---
 

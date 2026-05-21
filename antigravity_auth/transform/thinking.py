@@ -116,7 +116,7 @@ def sanitize_thinking_part(part: dict) -> dict | None:
       sanitized["signature"] = part["signature"]
     return sanitized
 
-  # Reasoning blocks (OpenCode format): {type: "reasoning", text, signature}
+  # Reasoning blocks: {type: "reasoning", text, signature}
   if type_val == "reasoning":
     text_content = part.get("text")
     if isinstance(text_content, dict):

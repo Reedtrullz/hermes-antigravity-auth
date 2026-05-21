@@ -3,8 +3,6 @@ import socketserver
 import webbrowser
 import threading
 import sys
-import os
-import json
 import time
 from urllib.parse import urlparse, parse_qs
 
@@ -46,59 +44,59 @@ class OAuthCallbackHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
         html_response = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Hermes Authentication Success</title>
-            <style>
-                body {
-                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                    background-color: #f3f4f6;
-                    color: #1f2937;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    height: 100vh;
-                    margin: 0;
-                }
-                .card {
-                    background: white;
-                    padding: 2.5rem;
-                    border-radius: 12px;
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-                    text-align: center;
-                    max-width: 400px;
-                    width: 90%;
-                }
-                h1 {
-                    color: #10b981;
-                    margin-top: 0;
-                    font-size: 1.75rem;
-                }
-                p {
-                    color: #4b5563;
-                    line-height: 1.5;
-                    margin-bottom: 1.5rem;
-                }
-                .badge {
-                    display: inline-block;
-                    background-color: #d1fae5;
-                    color: #065f46;
-                    padding: 0.25rem 0.75rem;
-                    border-radius: 9999px;
-                    font-size: 0.875rem;
-                    font-weight: 500;
-                }
-            </style>
-        </head>
-        <body>
-            <div class="card">
-                <h1>Authentication Success</h1>
-                <p>Google Antigravity has been successfully authorized for Hermes. You can now close this tab and return to your terminal.</p>
-                <div class="badge">Success</div>
-            </div>
-        </body>
-        </html>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Hermes Authentication Success</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f3f4f6;
+            color: #1f2937;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .card {
+            background: white;
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+        h1 {
+            color: #10b981;
+            margin-top: 0;
+            font-size: 1.75rem;
+        }
+        p {
+            color: #4b5563;
+            line-height: 1.5;
+            margin-bottom: 1.5rem;
+        }
+        .badge {
+            display: inline-block;
+            background-color: #d1fae5;
+            color: #065f46;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Authentication Success</h1>
+        <p>Google Antigravity has been successfully authorized for Hermes. You can now close this tab and return to your terminal.</p>
+        <div class="badge">Success</div>
+    </div>
+</body>
+</html>
         """
         self.wfile.write(html_response.encode("utf-8"))
 
@@ -134,6 +132,41 @@ def run_callback_server(port: int = 51121, timeout: int = 60) -> tuple[str | Non
     server_thread.join()
 
     return server.callback_code, server.callback_state
+
+
+def sync_token_to_google_oauth(
+    access_token: str,
+    refresh_token: str,
+    project_id: str = "",
+    email: str | None = None,
+    expires_ms: int | None = None,
+) -> bool:
+    """Sync credentials into Hermes' built-in Google OAuth store.
+
+    Hermes v0.14 routes Cloud Code/Gemini requests through agent.google_oauth,
+    which reads auth/google_oauth.json rather than auth.json. Keeping both
+    stores in sync lets the Antigravity CLI manage accounts while Hermes' native
+    runtime client performs the request transport.
+    """
+    try:
+        from agent.google_oauth import GoogleCredentials, save_credentials
+    except Exception:
+        return False
+
+    parts = parse_refresh_parts(refresh_token)
+    resolved_project_id = project_id or parts.get("projectId") or ""
+    resolved_expires_ms = expires_ms or int(time.time() * 1000) + 3600 * 1000
+
+    credentials = GoogleCredentials(
+        access_token=access_token,
+        refresh_token=parts.get("refreshToken", ""),
+        expires_ms=resolved_expires_ms,
+        email=email or "",
+        project_id=resolved_project_id,
+        managed_project_id=parts.get("managedProjectId") or "",
+    )
+    save_credentials(credentials)
+    return True
 
 
 def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
@@ -216,6 +249,13 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
         project_id=resolved_project_id,
         email=email,
         set_active=True
+    )
+    sync_token_to_google_oauth(
+        access_token=result.get("access", ""),
+        refresh_token=refresh,
+        project_id=resolved_project_id,
+        email=email,
+        expires_ms=result.get("expires"),
     )
 
     print("-" * 60)
@@ -348,16 +388,34 @@ def interactive_accounts_menu():
                                 "refreshToken": acc.get("refreshToken", ""),
                                 "projectId": acc.get("projectId") or "",
                             })
+                            # Get a fresh access token for the auth.json
+                            expires_ms = None
+                            try:
+                                from .token import refresh_access_token
+                                refreshed = refresh_access_token({"refresh": packed_refresh})
+                                access_token = refreshed.get("access", "")
+                                expires_ms = refreshed.get("expires")
+                            except Exception:
+                                access_token = ""  # fallback to empty if refresh fails
                             sync_token_to_auth_json(
-                                access_token="",
+                                access_token=access_token,
                                 refresh_token=packed_refresh,
                                 project_id=acc.get("projectId") or "",
                                 email=acc.get("email"),
                                 set_active=True
                             )
+                            sync_token_to_google_oauth(
+                                access_token=access_token,
+                                refresh_token=packed_refresh,
+                                project_id=acc.get("projectId") or "",
+                                email=acc.get("email"),
+                                expires_ms=expires_ms,
+                            )
                             print(f"Set active account to: {acc.get('email')}")
                         else:
                             print("Invalid index.")
+                    else:
+                        print("Invalid input.")
                 except ValueError:
                     print("Invalid input.")
             elif choice == "4":
@@ -386,7 +444,10 @@ def setup_cli(parser):
     
     subparsers.add_parser("accounts", help="Manage multi-account rotation console")
     
-    list_parser = subparsers.add_parser("list", help="List configured accounts")
+    subparsers.add_parser("list", help="List configured accounts")
+
+    subparsers.add_parser("quota", help="Verify accounts and show quota status")
+    subparsers.add_parser("check", help="Verify accounts and show quota status")
     
     delete_parser = subparsers.add_parser("delete", help="Delete a saved account")
     delete_parser.add_argument("email_or_index", help="Email address or account index to remove")
@@ -402,6 +463,8 @@ def handle_cli(args):
             list_accounts()
         elif args.action == "delete":
             delete_account(args.email_or_index)
+        elif args.action in ("quota", "check"):
+            check_quotas_and_verify()
         else:
             interactive_accounts_menu()
     except KeyboardInterrupt:

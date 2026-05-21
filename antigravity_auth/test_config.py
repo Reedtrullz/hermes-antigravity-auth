@@ -8,6 +8,7 @@ from antigravity_auth.config import (
     TokenBucketConfig,
     DEFAULT_CONFIG,
     load_config_from_dict,
+    load_config_from_yaml,
     apply_env_overrides,
     get_config,
 )
@@ -156,6 +157,66 @@ class TestLoadConfigFromDict(unittest.TestCase):
     def test_soft_quota_cache_ttl_as_string(self):
         config = load_config_from_dict({"soft_quota_cache_ttl_minutes": "auto"})
         self.assertEqual(config.soft_quota_cache_ttl_minutes, "auto")
+
+    def test_loads_hermes_plugin_entry_config(self):
+        import tempfile
+        from pathlib import Path
+
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("pyyaml not installed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.yaml"
+            path.write_text(
+                """
+plugins:
+  entries:
+    antigravity:
+      debug: true
+      cli_first: true
+      quiet_mode: true
+      health_score:
+        initial: 62
+""",
+                encoding="utf-8",
+            )
+            config = load_config_from_yaml(path)
+
+        self.assertIsNotNone(config)
+        assert config is not None
+        self.assertTrue(config.debug)
+        self.assertTrue(config.cli_first)
+        self.assertTrue(config.quiet_mode)
+        self.assertEqual(config.health_score.initial, 62)
+
+    def test_nested_hermes_config_overrides_root_compat_config(self):
+        import tempfile
+        from pathlib import Path
+
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("pyyaml not installed")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "config.yaml"
+            path.write_text(
+                """
+debug: false
+plugins:
+  entries:
+    antigravity:
+      debug: true
+""",
+                encoding="utf-8",
+            )
+            config = load_config_from_yaml(path)
+
+        self.assertIsNotNone(config)
+        assert config is not None
+        self.assertTrue(config.debug)
 
 
 class TestApplyEnvOverrides(unittest.TestCase):

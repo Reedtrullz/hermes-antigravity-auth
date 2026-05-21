@@ -1,3 +1,4 @@
+import gzip
 import json
 import time
 import urllib.request
@@ -10,6 +11,13 @@ try:
 except ImportError:
     from constants import ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET
     from storage import load_accounts, save_accounts, sync_token_to_auth_json
+
+
+def _decompress(body: bytes, response) -> bytes:
+    encoding = response.headers.get("Content-Encoding", "")
+    if "gzip" in encoding:
+        return gzip.decompress(body)
+    return body
 
 
 class AntigravityTokenRefreshError(Exception):
@@ -124,12 +132,12 @@ def refresh_access_token(auth: dict) -> dict:
         with urllib.request.urlopen(req, timeout=10) as response:
             status = response.status
             status_text = response.reason if hasattr(response, "reason") else "OK"
-            resp_bytes = response.read()
+            resp_bytes = _decompress(response.read(), response)
     except urllib.error.HTTPError as e:
         status = e.code
         status_text = e.reason if hasattr(e, "reason") else "HTTP Error"
         try:
-            resp_bytes = e.read()
+            resp_bytes = _decompress(e.read(), e)
         except Exception:
             resp_bytes = b""
     except Exception as e:

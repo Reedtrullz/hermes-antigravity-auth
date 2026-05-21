@@ -10,9 +10,11 @@ from urllib.parse import urlparse
 try:
     from .constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
     from .token import refresh_access_token
+    from .storage import sync_token_to_auth_json
 except ImportError:
     from constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
     from token import refresh_access_token
+    from storage import sync_token_to_auth_json
 
 
 @dataclass
@@ -291,6 +293,21 @@ def probe_account_health(account: dict) -> VerificationProbeResult:
             status="error",
             message="Could not refresh access token for this account.",
         )
+
+    # Persist the refreshed token to auth.json
+    project_id_for_sync = (
+        account.get("managedProjectId")
+        or account.get("projectId")
+        or account.get("project_id")
+    ) or ""
+    email_for_sync = account.get("email")
+    sync_token_to_auth_json(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        project_id=project_id_for_sync,
+        email=email_for_sync,
+        set_active=False
+    )
 
     project_id = (
         account.get("managedProjectId")

@@ -178,7 +178,7 @@ def is_rate_limited_for_header_style(
 class RateLimitTracker:
   """Tracks rate limit state with time-window deduplication.
 
-  Mirrors parts of TS AccountManager + plugin.ts rate limit handling.
+  Mirrors account manager rate limit handling from the original implementation.
   """
 
   def __init__(self) -> None:

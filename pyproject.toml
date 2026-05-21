@@ -25,5 +25,11 @@ dependencies = [
 yaml = ["pyyaml>=6.0"]
 dev = ["pytest>=8", "pytest-cov>=5"]
 
+[project.entry-points."hermes_agent.plugins"]
+antigravity-cli = "antigravity_auth.hermes_plugin"
+
+[project.scripts]
+hermes-antigravity-install = "antigravity_auth.install_plugins:main"
+
 [tool.setuptools.packages.find]
 include = ["antigravity_auth*"]

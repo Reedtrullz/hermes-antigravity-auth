@@ -1,5 +1,5 @@
 name: antigravity
 kind: model-provider
 version: 1.6.0
-description: Google Antigravity OAuth — Claude, Gemini, GPT-OSS via Google credentials
+description: Google Antigravity OAuth via Hermes Cloud Code transport
 author: NoeFabris & Reedtrullz

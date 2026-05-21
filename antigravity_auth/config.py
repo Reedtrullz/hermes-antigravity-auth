@@ -79,6 +79,26 @@ class Config:
 
 DEFAULT_CONFIG: Config = Config()
 
+CONFIG_FIELD_NAMES = (
+  "quiet_mode", "toast_scope", "debug", "debug_tui", "log_dir",
+  "keep_thinking",
+  "session_recovery", "auto_resume", "resume_text",
+  "empty_response_max_attempts", "empty_response_retry_delay_ms",
+  "tool_id_recovery",
+  "claude_tool_hardening", "claude_prompt_auto_caching",
+  "proactive_token_refresh", "proactive_refresh_buffer_seconds",
+  "proactive_refresh_check_interval_seconds",
+  "max_rate_limit_wait_seconds", "quota_fallback", "cli_first",
+  "account_selection_strategy", "pid_offset_enabled",
+  "switch_on_first_rate_limit", "scheduling_mode",
+  "max_cache_first_wait_seconds", "failure_ttl_seconds",
+  "default_retry_after_seconds", "max_backoff_seconds",
+  "request_jitter_max_ms", "soft_quota_threshold_percent",
+  "quota_refresh_interval_minutes", "soft_quota_cache_ttl_minutes",
+)
+
+NESTED_CONFIG_FIELD_NAMES = ("signature_cache", "health_score", "token_bucket")
+
 
 def _parse_bool(value: str) -> bool:
   return value.lower() in ("1", "true", "yes", "on")
@@ -87,25 +107,7 @@ def _parse_bool(value: str) -> bool:
 def load_config_from_dict(data: dict[str, Any]) -> Config:
   kwargs: dict[str, Any] = {}
 
-  scalar_fields = (
-    "quiet_mode", "toast_scope", "debug", "debug_tui", "log_dir",
-    "keep_thinking",
-    "session_recovery", "auto_resume", "resume_text",
-    "empty_response_max_attempts", "empty_response_retry_delay_ms",
-    "tool_id_recovery",
-    "claude_tool_hardening", "claude_prompt_auto_caching",
-    "proactive_token_refresh", "proactive_refresh_buffer_seconds",
-    "proactive_refresh_check_interval_seconds",
-    "max_rate_limit_wait_seconds", "quota_fallback", "cli_first",
-    "account_selection_strategy", "pid_offset_enabled",
-    "switch_on_first_rate_limit", "scheduling_mode",
-    "max_cache_first_wait_seconds", "failure_ttl_seconds",
-    "default_retry_after_seconds", "max_backoff_seconds",
-    "request_jitter_max_ms", "soft_quota_threshold_percent",
-    "quota_refresh_interval_minutes", "soft_quota_cache_ttl_minutes",
-  )
-
-  for field_name in scalar_fields:
+  for field_name in CONFIG_FIELD_NAMES:
     if field_name in data:
       kwargs[field_name] = data[field_name]
 
@@ -119,6 +121,34 @@ def load_config_from_dict(data: dict[str, Any]) -> Config:
     kwargs["token_bucket"] = TokenBucketConfig(**data["token_bucket"])
 
   return Config(**kwargs)
+
+
+def _extract_config_data(data: dict[str, Any]) -> dict[str, Any]:
+  """Return Antigravity plugin config from Hermes config.yaml.
+
+  Hermes stores plugin config under plugins.entries.<plugin-name>. Older
+  development snapshots used root-level keys, so root keys are still accepted
+  and nested plugin config wins on conflict.
+  """
+  extracted: dict[str, Any] = {}
+
+  for field_name in (*CONFIG_FIELD_NAMES, *NESTED_CONFIG_FIELD_NAMES):
+    if field_name in data:
+      extracted[field_name] = data[field_name]
+
+  plugins = data.get("plugins")
+  if not isinstance(plugins, dict):
+    return extracted
+
+  entries = plugins.get("entries")
+  if not isinstance(entries, dict):
+    return extracted
+
+  antigravity = entries.get("antigravity")
+  if isinstance(antigravity, dict):
+    extracted.update(antigravity)
+
+  return extracted
 
 
 def load_config_from_yaml(yaml_path: Path) -> Config | None:
@@ -135,7 +165,7 @@ def load_config_from_yaml(yaml_path: Path) -> Config | None:
       data = yaml.safe_load(f)
     if not isinstance(data, dict):
       return None
-    return load_config_from_dict(data)
+    return load_config_from_dict(_extract_config_data(data))
   except Exception:
     return None
 
@@ -143,22 +173,31 @@ def load_config_from_yaml(yaml_path: Path) -> Config | None:
 _config_cache: Config | None = None
 
 
-def get_config() -> Config:
-  global _config_cache
+def get_config(force_reload: bool = False) -> Config:
+    global _config_cache
 
-  if _config_cache is not None:
-    return _config_cache
+    if force_reload:
+        _config_cache = None
 
-  config = DEFAULT_CONFIG
+    if _config_cache is not None:
+        return _config_cache
 
-  yaml_path = get_hermes_home() / "config.yaml"
-  yaml_config = load_config_from_yaml(yaml_path)
-  if yaml_config is not None:
-    config = yaml_config
+    config = DEFAULT_CONFIG
 
-  config = apply_env_overrides(config)
-  _config_cache = config
-  return config
+    yaml_path = get_hermes_home() / "config.yaml"
+    yaml_config = load_config_from_yaml(yaml_path)
+    if yaml_config is not None:
+        config = yaml_config
+
+    config = apply_env_overrides(config)
+    _config_cache = config
+    return config
+
+
+def invalidate_config_cache() -> None:
+    """Invalidate the configuration cache, forcing a reload on next get_config call."""
+    global _config_cache
+    _config_cache = None
 
 
 def apply_env_overrides(config: Config) -> Config:

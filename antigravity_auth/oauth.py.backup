@@ -4,7 +4,6 @@ import base64
 import json
 import time
 import sys
-import traceback
 import gzip
 import urllib.request
 import urllib.error
@@ -21,7 +20,6 @@ try:
         GEMINI_CLI_HEADERS,
         get_antigravity_headers,
     )
-    from .debug import createLogger, format_error_for_log
 except ImportError:
     from constants import (
         ANTIGRAVITY_CLIENT_ID,
@@ -33,9 +31,6 @@ except ImportError:
         GEMINI_CLI_HEADERS,
         get_antigravity_headers,
     )
-    from debug import createLogger, format_error_for_log
-
-_log = createLogger(__name__)
 
 def generate_pkce() -> dict:
     verifier = secrets.token_urlsafe(64)
@@ -165,9 +160,8 @@ def fetch_project_id(access_token: str) -> str:
                 pid = cloudaicompanion_project.get("id")
                 if isinstance(pid, str) and pid:
                     return pid
-        except Exception as e:
-            _log.debug(f"fetch_project_id failed for endpoint {base_endpoint}: {format_error_for_log(e)}")
-            continue
+        except Exception:
+            pass
             
     return ""
 
@@ -265,8 +259,6 @@ def exchange_antigravity(code: str, state: str) -> dict:
             "project_id": effective_project_id or "",
         }
     except Exception as error:
-        _log.error(f"exchange_antigravity failed: {format_error_for_log(error)}")
-        _log.debug("traceback", extra={"traceback": traceback.format_exc()})
         return {
             "type": "failed",
             "error": str(error)

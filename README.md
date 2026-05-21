@@ -53,7 +53,13 @@ pip install -e .
 
 ### 2. Install the Hermes plugins
 
-Copy the plugins to your Hermes plugins directory:
+Install the CLI and model-provider wrappers into your Hermes plugins directory:
+
+```bash
+hermes-antigravity-install
+```
+
+From a source checkout, copying the plugin directories also works:
 
 ```bash
 # From the repo root:
@@ -82,13 +88,13 @@ This opens a browser window for Google OAuth. The provider is automatically regi
 ### 5. Use it
 
 ```bash
-hermes run "Hello" --model=antigravity-claude-opus-4-6-thinking
+hermes -z "Hello" --provider antigravity --model claude-opus-4-6-thinking
 ```
 
 Or use the alias:
 
 ```bash
-hermes run "Hello" --model=ag/claude-opus-4-6-thinking
+hermes -z "Hello" --provider ag --model claude-opus-4-6-thinking
 ```
 
 </details>
@@ -103,7 +109,12 @@ hermes run "Hello" --model=ag/claude-opus-4-6-thinking
    pip install hermes-antigravity-auth
    ```
 
-2. Copy the plugins to the Hermes plugins directory:
+2. Install the Hermes plugin wrappers:
+   ```bash
+   hermes-antigravity-install
+   ```
+
+   Or copy the source plugin directories to the Hermes plugins directory:
    ```bash
    cp -r plugins/model-providers/antigravity ~/.hermes/plugins/model-providers/
    cp -r plugins/antigravity_tools ~/.hermes/plugins/antigravity-cli/
@@ -124,7 +135,7 @@ hermes run "Hello" --model=ag/claude-opus-4-6-thinking
 ### Verification
 
 ```bash
-hermes run "Hello" --model=antigravity-claude-opus-4-6-thinking
+hermes -z "Hello" --provider antigravity --model claude-opus-4-6-thinking
 ```
 
 </details>
@@ -149,11 +160,11 @@ hermes run "Hello" --model=antigravity-claude-opus-4-6-thinking
 
 | Model | Alias | Thinking |
 |-------|-------|----------|
-| `antigravity-gemini-3-pro` | `ag/gemini-3-pro` | low, high |
-| `antigravity-gemini-3.1-pro` | `ag/gemini-3.1-pro` | low, high |
-| `antigravity-gemini-3-flash` | `ag/gemini-3-flash` | minimal, low, medium, high |
-| `antigravity-claude-sonnet-4-6` | `ag/claude-sonnet-4-6` | — |
-| `antigravity-claude-opus-4-6-thinking` | `ag/claude-opus-4-6-thinking` | low, max |
+| `gemini-3-pro` | `--provider ag` | low, high |
+| `gemini-3.1-pro` | `--provider ag` | low, high |
+| `gemini-3-flash` | `--provider ag` | minimal, low, medium, high |
+| `claude-sonnet-4-6` | `--provider ag` | — |
+| `claude-opus-4-6-thinking` | `--provider ag` | low, max |
 
 **Gemini CLI quota** (fallback or `cli_first: true`):
 
@@ -167,7 +178,7 @@ hermes run "Hello" --model=antigravity-claude-opus-4-6-thinking
 ### Using Variants
 
 ```bash
-hermes run "Solve this" --model=antigravity-claude-opus-4-6-thinking --variant=max
+hermes -z "Solve this" --provider antigravity --model claude-opus-4-6-thinking --variant=max
 ```
 
 ---
@@ -206,7 +217,7 @@ plugins:
 | `ANTIGRAVITY_CLIENT_ID` | OAuth client ID (defaults to built-in credentials) |
 | `ANTIGRAVITY_CLIENT_SECRET` | OAuth client secret (defaults to built-in credentials) |
 | `HERMES_ANTIGRAVITY_DEBUG=1` | Enable debug file logging |
-| `HERMES_ANTIGRAVITY_DEBUG=2` | Verbose debug logging |
+| `HERMES_ANTIGRAVITY_DEBUG_TUI=1` | Enable debug output in Hermes UI integrations |
 
 > OAuth credentials are loaded from `antigravity_auth/_credentials.py` (local, gitignored) or environment variables. When installed via pip, the credentials are bundled with the package. For local development from the repo, set the `ANTIGRAVITY_CLIENT_ID` and `ANTIGRAVITY_CLIENT_SECRET` env vars.
 
@@ -237,7 +248,7 @@ hermes antigravity check       # Check quota status
 | File | Path |
 |------|------|
 | Accounts | `~/.hermes/antigravity-accounts.json` |
-| Auth tokens | `~/.hermes/auth.json` |
+| Auth tokens | `~/.hermes/auth.json` and `~/.hermes/auth/google_oauth.json` |
 | Hermes config | `~/.hermes/config.yaml` |
 | Debug logs | `~/.hermes/logs/antigravity/` |
 

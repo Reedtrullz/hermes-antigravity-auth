@@ -1,302 +1,198 @@
 # Architecture Guide
 
-**Last Updated:** April 2026
+**Last Updated:** May 2026
 
-This document explains how the Antigravity plugin works: request/response flow, Claude-specific handling, and session recovery.
+This document describes the Hermes Agent Python implementation for Google Antigravity OAuth, account management, request transformation, and CLI integration.
 
 ---
 
 ## Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  OpenCode ──▶ Plugin ──▶ Antigravity API ──▶ Claude/Gemini      │
-│     │           │              │                   │            │
-│     │           │              │                   └─ Model     │
-│     │           │              └─ Google's gateway (Gemini fmt) │
-│     │           └─ THIS PLUGIN (auth, transform, recovery)      │
-│     └─ AI coding assistant                                      │
-└─────────────────────────────────────────────────────────────────┘
+Hermes Agent
+  ├─ antigravity-cli plugin: hermes antigravity ...
+  ├─ antigravity provider alias: antigravity / ag
+  ├─ Hermes Cloud Code runtime: google-gemini-cli
+  └─ Antigravity auth package: OAuth, storage, accounts, transforms
 ```
 
-The plugin intercepts requests to `generativelanguage.googleapis.com`, transforms them for the Antigravity API, and handles authentication, rate limits, and error recovery.
+The plugin authenticates Google accounts, stores Antigravity account state under `HERMES_HOME`, and registers Antigravity provider aliases that route through Hermes' native `google-gemini-cli` Cloud Code transport (`cloudcode-pa://google`). Login also syncs credentials into Hermes' `auth/google_oauth.json` store so the native runtime can refresh and attach OAuth tokens.
 
 ---
 
-## Module Structure
+## Runtime Components
 
 ```
-src/
-├── index.ts                 # Plugin exports
-├── plugin.ts                # Main entry, fetch interceptor
-├── constants.ts             # Endpoints, headers, config
-├── antigravity/
-│   └── oauth.ts             # OAuth token exchange
-└── plugin/
-    ├── auth.ts              # Token validation & refresh
-    ├── request.ts           # Request transformation (main logic)
-    ├── request-helpers.ts   # Schema cleaning, thinking filters
-    ├── thinking-recovery.ts # Turn boundary detection, crash recovery
-    ├── recovery.ts          # Session recovery (tool_result_missing)
-    ├── quota.ts             # Quota checking (API usage stats)
-    ├── cache.ts             # Auth & signature caching
-    ├── cache/
-    │   └── signature-cache.ts # Disk-based signature persistence
-    ├── config/
-    │   ├── schema.ts        # Zod config schema
-    │   └── loader.ts        # Config file loading
-    ├── accounts.ts          # Multi-account management
-    ├── server.ts            # OAuth callback server
-    └── debug.ts             # Debug logging
+antigravity_auth/
+├── cli.py                    # hermes antigravity login/accounts/list/delete/check/quota
+├── hermes_plugin.py          # Hermes entry point for the CLI plugin
+├── config.py                 # ~/.hermes/config.yaml loader with env overrides
+├── oauth.py                  # PKCE authorize/exchange flow
+├── storage.py                # HERMES_HOME-aware auth/account storage
+├── token.py                  # refresh token parsing and refresh
+├── endpoints.py              # Antigravity endpoint fallback metadata
+├── accounts/manager.py       # account selection, cooldowns, persistence
+└── transform/                # OpenAI/Gemini envelope, schema, SSE helpers
+
+plugins/
+├── antigravity_tools/        # file-system Hermes CLI plugin wrapper
+└── model-providers/
+    └── antigravity/          # provider aliases for Hermes model discovery
 ```
+
+The Python package is the source of truth. The plugin directories are thin Hermes integration wrappers.
 
 ---
 
-## Request Flow
+## Authentication Flow
 
-### 1. Interception (`plugin.ts`)
+1. `hermes antigravity login` starts the PKCE OAuth flow in `antigravity_auth/oauth.py`.
+2. The callback handler in `antigravity_auth/cli.py` receives the authorization code.
+3. `exchange_antigravity()` exchanges the code for access and refresh credentials.
+4. The account is written to `~/.hermes/antigravity-accounts.json`.
+5. Token state is synced to both:
+   - `~/.hermes/auth.json` under the `antigravity` provider key
+   - `~/.hermes/auth/google_oauth.json` for Hermes' native Cloud Code runtime
 
-```typescript
-fetch() intercepted → isGenerativeLanguageRequest() → prepareAntigravityRequest()
-```
-
-- Account selection (round-robin, rate-limit aware)
-- Token refresh if expired
-- Endpoint fallback (daily → autopush → prod)
-
-### 2. Request Transformation (`request.ts`)
-
-| Step | What Happens |
-|------|--------------|
-| Model detection | Detect Claude/Gemini from URL |
-| Thinking config | Add `thinkingConfig` for thinking models |
-| Thinking strip | Remove ALL thinking blocks (Claude) |
-| Tool normalization | Convert to `functionDeclarations[]` |
-| Schema cleaning | Remove unsupported JSON Schema fields |
-| ID assignment | Assign IDs to tool calls (FIFO matching) |
-| Wrap request | `{ project, model, request: {...} }` |
-
-### 3. Response Transformation (`request.ts`)
-
-| Step | What Happens |
-|------|--------------|
-| SSE streaming | Real-time line-by-line TransformStream |
-| Signature caching | Cache `thoughtSignature` for display |
-| Format transform | `thought: true` → `type: "reasoning"` |
-| Envelope unwrap | Extract inner `response` object |
+`HERMES_HOME` overrides the base directory for all Hermes-owned files.
 
 ---
 
-## Claude-Specific Handling
+## Provider Registration
 
-### Why Special Handling?
+The model provider plugin at `plugins/model-providers/antigravity` registers a `ProviderProfile` named `google-gemini-cli` with Antigravity aliases:
 
-Claude through Antigravity requires:
-1. **Gemini format** - `contents[].parts[]` not `messages[].content[]`
-2. **Thinking signatures** - Multi-turn needs signed blocks or errors
-3. **Schema restrictions** - Rejects `const`, `$ref`, `$defs`, etc.
-4. **Tool validation** - `VALIDATED` mode requires proper schemas
+- `antigravity`
+- `antigravity-google`
+- `ag`
 
-### Thinking Block Strategy (v2.0)
+This is intentional. Hermes v0.14 has native runtime support for `google-gemini-cli` and `cloudcode-pa://google`; generic `oauth_external` providers are not enough to execute requests. Antigravity aliases therefore resolve to the supported Hermes Cloud Code provider while exposing Antigravity model names and account tooling.
 
-**Problem:** OpenCode stores thinking blocks, but may corrupt signatures.
+Typical usage:
 
-**Solution:** Strip ALL thinking blocks from outgoing requests.
-
+```bash
+hermes -z "Hello" --provider antigravity --model claude-opus-4-6-thinking
+hermes -z "Hello" --provider ag --model gemini-3.1-pro
 ```
-Turn 1 Response: { thought: true, text: "...", thoughtSignature: "abc" }
-                 ↓ (stored by OpenCode, possibly corrupted)
-Turn 2 Request:  Plugin STRIPS all thinking blocks
-                 ↓
-Claude API:      Generates fresh thinking
-```
-
-**Why this works:**
-- Zero signature errors (impossible to have invalid signatures)
-- Same quality (Claude sees full conversation, re-thinks fresh)
-- Simpler code (no complex validation/restoration)
-
-### Thinking Injection for Tool Use
-
-Claude API requires thinking before `tool_use` blocks. The plugin:
-
-1. Caches signed thinking from responses (`lastSignedThinkingBySessionKey`)
-2. On subsequent requests, injects cached thinking before tool_use
-3. Only injects for the **first** assistant message of a turn (not every message)
-
-**Turn boundary detection** (`thinking-recovery.ts`):
-```typescript
-// A "turn" starts after a real user message (not tool_result)
-// Only inject thinking into first assistant message after that
-```
-
----
-
-## Session Recovery
-
-### Tool Result Missing Error
-
-When a tool execution is interrupted (ESC, timeout, crash):
-
-```
-Error: tool_use ids were found without tool_result blocks immediately after
-```
-
-**Recovery flow** (`recovery.ts`):
-
-1. Detect error via `session.error` event
-2. Fetch session messages via `client.session.messages()`
-3. Extract `tool_use` IDs from failed message
-4. Inject synthetic `tool_result` blocks:
-   ```typescript
-   { type: "tool_result", tool_use_id: id, content: "Operation cancelled" }
-   ```
-5. Send via `client.session.prompt()`
-6. Optionally auto-resume with "continue"
-
-### Thinking Block Order Error
-
-```
-Error: Expected thinking but found text
-```
-
-**Recovery** (`thinking-recovery.ts`):
-
-1. Detect conversation is in tool loop without thinking at turn start
-2. Close the corrupted turn with synthetic messages
-3. Start fresh turn where Claude can generate new thinking
-
----
-
-## Schema Cleaning
-
-Claude rejects unsupported JSON Schema features. The plugin uses an **allowlist approach**:
-
-**Kept:** `type`, `properties`, `required`, `description`, `enum`, `items`
-
-**Removed:** `const`, `$ref`, `$defs`, `default`, `examples`, `additionalProperties`, `$schema`, `title`
-
-**Transformations:**
-- `const: "value"` → `enum: ["value"]`
-- Empty object schema → Add placeholder `reason` property
-
----
-
-## Multi-Account Load Balancing
-
-### How It Works
-
-1. **Sticky selection** - Same account until rate limited (preserves cache)
-2. **Per-model-family** - Claude/Gemini rate limits tracked separately
-3. **Dual quota (Gemini)** - Antigravity + Gemini CLI headers
-4. **Automatic failover** - On 429, switch to next available account
-
-### Account Storage
-
-Location: `~/.config/opencode/antigravity-accounts.json`
-
-Contains OAuth refresh tokens - treat as sensitive.
 
 ---
 
 ## Configuration
 
-### Environment Variables
+Configuration lives under `plugins.entries.antigravity` in `~/.hermes/config.yaml`:
+
+```yaml
+plugins:
+  enabled:
+    - antigravity-cli
+  entries:
+    antigravity:
+      keep_thinking: false
+      session_recovery: true
+      cli_first: false
+      debug: false
+      quiet_mode: false
+```
+
+For compatibility with early Python migration snapshots, root-level Antigravity keys are still accepted, but nested plugin config wins on conflicts.
+
+Environment overrides:
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENCODE_ANTIGRAVITY_DEBUG` | `1` or `2` for file debug logging |
-| `OPENCODE_ANTIGRAVITY_DEBUG_TUI` | `1` or `true` for TUI log panel debug output |
-| `OPENCODE_ANTIGRAVITY_QUIET` | Suppress toast notifications |
-
-`debug` and `debug_tui` are independent sinks: `debug` controls file logs, while `debug_tui` controls TUI logs.
-
-### Config File
-
-Location: `~/.config/opencode/antigravity.json`
-
-```json
-{
-  "session_recovery": true,
-  "auto_resume": true,
-  "resume_text": "continue",
-  "keep_thinking": false
-}
-```
+| `HERMES_HOME` | Override `~/.hermes` |
+| `HERMES_ANTIGRAVITY_DEBUG` | Enable file debug logging |
+| `HERMES_ANTIGRAVITY_DEBUG_TUI` | Enable debug output in Hermes UI integrations |
+| `HERMES_ANTIGRAVITY_QUIET` | Suppress status output |
+| `HERMES_ANTIGRAVITY_CLI_FIRST` | Prefer Gemini CLI quota for Gemini models |
+| `HERMES_ANTIGRAVITY_ACCOUNT_SELECTION_STRATEGY` | Account rotation strategy |
+| `HERMES_ANTIGRAVITY_SCHEDULING_MODE` | Rate-limit scheduling mode |
 
 ---
 
-## Key Functions Reference
+## Account Storage
 
-### `request.ts`
+Location: `~/.hermes/antigravity-accounts.json`
 
-| Function | Purpose |
-|----------|---------|
-| `prepareAntigravityRequest()` | Main request transformation |
-| `transformAntigravityResponse()` | SSE streaming, format conversion |
-| `ensureThinkingBeforeToolUseInContents()` | Inject cached thinking |
-| `createStreamingTransformer()` | Real-time SSE processing |
+The account manager stores OAuth refresh tokens, project IDs, active indices, per-family active accounts, cooldowns, quota cache state, and fingerprint metadata. Writes are atomic and honor `HERMES_HOME`.
 
-### `request-helpers.ts`
+Sensitive files:
 
-| Function | Purpose |
-|----------|---------|
-| `deepFilterThinkingBlocks()` | Recursive thinking block removal |
-| `cleanJSONSchemaForAntigravity()` | Schema sanitization |
-| `transformThinkingParts()` | `thought` → `reasoning` format |
+- `~/.hermes/antigravity-accounts.json`
+- `~/.hermes/auth.json`
+- `~/.hermes/auth/google_oauth.json`
 
-### `thinking-recovery.ts`
+---
 
-| Function | Purpose |
-|----------|---------|
-| `analyzeConversationState()` | Detect turn boundaries, tool loops |
-| `needsThinkingRecovery()` | Check if recovery needed |
-| `closeToolLoopForThinking()` | Inject synthetic messages |
+## Request And Transform Helpers
 
-### `recovery.ts`
+The transform package contains the Python equivalents for request/response adaptation:
 
-| Function | Purpose |
-|----------|---------|
-| `handleSessionRecovery()` | Main recovery orchestration |
-| `createSessionRecoveryHook()` | Hook factory for plugin |
+| Module | Purpose |
+|--------|---------|
+| `transform/messages.py` | OpenAI-style messages to Gemini `contents[].parts[]` |
+| `transform/thinking.py` | Claude thinking block stripping |
+| `transform/schema.py` | JSON Schema allowlist sanitization |
+| `transform/envelope.py` | Antigravity request envelope construction |
+| `transform/response.py` | SSE and candidate response conversion |
+
+These helpers are covered by unit tests and remain available for Hermes integration paths that need direct Antigravity request wrapping.
+
+---
+
+## Multi-Account Behavior
+
+Account selection is handled by `antigravity_auth/accounts/manager.py`.
+
+Key behavior:
+
+- Sticky account selection until a rate limit or cooldown requires rotation
+- Separate active account tracking for Claude and Gemini families
+- Header-style aware rate-limit tracking for Gemini quota pools
+- Health-score based selection and recovery
+- Optional PID offset for parallel Hermes sessions
+- Cached quota state with soft quota thresholds
 
 ---
 
 ## Debugging
 
-### Enable Logging
+Enable debug logging:
 
 ```bash
-export OPENCODE_ANTIGRAVITY_DEBUG=2      # Verbose file logs
-export OPENCODE_ANTIGRAVITY_DEBUG_TUI=1  # TUI log panel output
+export HERMES_ANTIGRAVITY_DEBUG=1
+export HERMES_ANTIGRAVITY_DEBUG_TUI=1
 ```
 
-### Log Location
+Then run:
 
-`~/.config/opencode/antigravity-logs/`
+```bash
+hermes antigravity check
+hermes -z "Hello" --provider antigravity --model gemini-3.1-pro
+```
 
-### What To Check
+Check the Hermes home directory for account and auth state:
 
-1. Is `isClaudeModel` true for Claude models?
-2. Are thinking blocks being stripped?
-3. Are tool schemas being cleaned?
-4. Is session recovery triggering?
+```bash
+ls ~/.hermes/
+ls ~/.hermes/auth/
+```
 
 ---
 
 ## Troubleshooting
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `invalid signature` | Corrupted thinking block | Update plugin (strips all thinking) |
-| `Unknown field: const` | Schema uses `const` | Plugin auto-converts to `enum` |
-| `tool_use without tool_result` | Interrupted execution | Session recovery injects results |
-| `Expected thinking but found text` | Turn started without thinking | Thinking recovery closes turn |
-| `429 Too Many Requests` | Rate limited | Plugin auto-rotates accounts |
+| Error | Likely Cause | Fix |
+|-------|--------------|-----|
+| Provider not found | Model provider plugin not installed | Copy `plugins/model-providers/antigravity` to `~/.hermes/plugins/model-providers/` |
+| `oauth_external` unsupported | Provider did not resolve to `google-gemini-cli` | Reinstall the current Antigravity provider plugin |
+| Missing credentials | Login did not complete or auth store is stale | Run `hermes antigravity login` |
+| 429 rate limit | Current account is rate-limited | Add accounts or wait for cooldown |
+| Schema field rejected | Tool schema contains unsupported JSON Schema fields | `transform/schema.py` strips or converts unsupported fields |
 
 ---
 
 ## See Also
 
-- [ANTIGRAVITY_API_SPEC.md](./ANTIGRAVITY_API_SPEC.md) - API reference
-- [README.md](../README.md) - Installation & usage
+- [ANTIGRAVITY_API_SPEC.md](./ANTIGRAVITY_API_SPEC.md)
+- [README.md](../README.md)
