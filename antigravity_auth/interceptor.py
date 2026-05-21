@@ -54,9 +54,7 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         from .fingerprint import generate_fingerprint
         fp = generate_fingerprint()
         if fp:
-            ua = fp.get("userAgent")
-            if ua and isinstance(ua, str):
-                request.headers["User-Agent"] = ua
+            # Only inject Client-Metadata, keep our Antigravity UA
             cm = fp.get("clientMetadata")
             if cm:
                 request.headers["Client-Metadata"] = json.dumps(cm)
