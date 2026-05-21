@@ -367,13 +367,18 @@ def check_quotas_and_verify():
             continue
 
         print(f"[{idx}] {email} (Project: {project_id or '<none>'})")
-        if isinstance(quota, dict):
-            for group_name, group_data in quota.items():
-                if not isinstance(group_data, dict):
+        if isinstance(quota, list):
+            for bucket in quota:
+                if not isinstance(bucket, dict):
                     continue
-                used = group_data.get("used", "?")
-                limit = group_data.get("limit", "?")
-                print(f"    {group_name}: {used}/{limit} used")
+                model_id = bucket.get("modelId", "?")
+                remaining = bucket.get("remainingFraction")
+                pct = f"{remaining:.0%}" if isinstance(remaining, (int, float)) else "?"
+                reset = bucket.get("resetTime", "")
+                line = f"    {model_id}: {pct} remaining"
+                if reset:
+                    line += f" (resets {reset[:10]})"
+                print(line)
         else:
             print(f"    Raw response: {quota}")
     print("=" * 60)

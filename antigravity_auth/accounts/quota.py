@@ -131,11 +131,11 @@ def resolve_quota_group(family: str, model: str | None = None) -> QuotaGroup:
   return "claude" if family == "claude" else "gemini-pro"
 
 
-def fetch_quota_from_api(access_token: str, project_id: str) -> dict | None:
+def fetch_quota_from_api(access_token: str, project_id: str) -> list | None:
     """Fetch live quota data from the Antigravity API.
 
-    Calls v1internal:retrieveUserQuota with the Antigravity envelope.
-    Returns parsed quota groups dict, or None on failure.
+    Calls v1internal:retrieveUserQuota. Returns list of bucket dicts
+    with modelId, remainingFraction, resetTime, or None on failure.
     """
     import json
     import urllib.request
@@ -146,15 +146,12 @@ def fetch_quota_from_api(access_token: str, project_id: str) -> dict | None:
     headers["Authorization"] = f"Bearer {access_token}"
     headers["Content-Type"] = "application/json"
 
-    envelope = json.dumps({
-        "project": project_id,
-        "userAgent": "antigravity",
-    }).encode("utf-8")
+    envelope = json.dumps({"project": project_id}).encode("utf-8")
 
     try:
         req = urllib.request.Request(url, data=envelope, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            return data.get("quotaGroups") or data
+            return data.get("buckets") or []
     except Exception:
         return None
