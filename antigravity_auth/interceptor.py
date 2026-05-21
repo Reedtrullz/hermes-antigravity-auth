@@ -43,33 +43,43 @@ class _AntigravityTransport:
 
     def _forward(self, request, body_bytes):
         """Forward a request with the already-read body bytes (stream was consumed)."""
-        new_req = httpcore.Request(
-            method=request.method,
-            url=request.url,
-            headers=request.headers,
-            content=body_bytes,
-            extensions=request.extensions,
-        )
-        return self._original.handle_request(new_req)
+        import sys, traceback
+        try:
+            new_req = httpcore.Request(
+                method=request.method,
+                url=request.url,
+                headers=request.headers,
+                content=body_bytes,
+                extensions=request.extensions,
+            )
+            return self._original.handle_request(new_req)
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            raise
 
     def handle_request(self, request: httpcore.Request):
         """Transform the request body before forwarding to the real transport."""
-        url_str = str(request.url) if hasattr(request, 'url') else ""
-        
-        # Only intercept Cloud Code requests
-        if b"cloudcode-pa.googleapis.com" not in (request.url.host or b""):
-            return self._original.handle_request(request)
-
-        # Read the body from the stream iterator (consumes it)
-        body_bytes = b"".join(request.stream)
+        import sys, traceback
         try:
-            body = json.loads(body_bytes)
-        except (json.JSONDecodeError, TypeError):
-            return self._forward(request, body_bytes)
+            url_str = str(request.url) if hasattr(request, 'url') else ""
+            
+            # Only intercept Cloud Code requests
+            if b"cloudcode-pa.googleapis.com" not in (request.url.host or b""):
+                return self._original.handle_request(request)
 
-        if not isinstance(body, dict) or "request" not in body:
-            return self._forward(request, body_bytes)
+            # Read the body from the stream iterator (consumes it)
+            body_bytes = b"".join(request.stream)
+            try:
+                body = json.loads(body_bytes)
+            except (json.JSONDecodeError, TypeError):
+                return self._forward(request, body_bytes)
 
+            if not isinstance(body, dict) or "request" not in body:
+                return self._forward(request, body_bytes)
+        except Exception as e:
+            traceback.print_exc(file=sys.stderr)
+            return self._forward(request, b"".join(request.stream) if hasattr(request, 'stream') else b"")
+        
         config = get_config()
         model = str(body.get("model", ""))
         project_id = str(body.get("project", ""))
