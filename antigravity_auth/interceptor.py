@@ -9,6 +9,14 @@ from typing import Any
 
 import httpx
 
+from .config import get_config
+from .endpoints import select_endpoint
+from .transform.envelope import (
+    build_antigravity_headers,
+    build_antigravity_envelope,
+    resolve_model_for_header_style,
+)
+
 logger = logging.getLogger(__name__)
 
 _PATCHED = False
@@ -27,13 +35,6 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
 
     Headers are also replaced with randomized Antigravity-style headers.
     """
-    from .transform.envelope import (
-        build_antigravity_headers,
-        build_antigravity_envelope,
-        resolve_model_for_header_style,
-    )
-    from .config import get_config
-
     # Only transform requests going to the Cloud Code endpoint
     if "cloudcode-pa.googleapis.com" not in str(request.url):
         return
@@ -63,12 +64,6 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         header_style=header_style,
     )
 
-    # --- Endpoint fallback chain (daily → autopush → prod) ---
-    from .constants import (
-        ANTIGRAVITY_ENDPOINT_PROD,
-    )
-    from .endpoints import select_endpoint
-
     # Rewrite URL to use Antigravity endpoint
     endpoint = select_endpoint(config)
     old_url = str(request.url)
@@ -82,7 +77,8 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     request.content = json.dumps(envelope).encode("utf-8")
 
     # --- Strip Claude thinking blocks when keep_thinking=False ---
-    from .transform import is_claude_model, strip_all_thinking_blocks
+    from .transform.thinking import strip_all_thinking_blocks
+    from .transform.messages import is_claude_model
 
     if is_claude_model(model) and not config.keep_thinking:
         inner = envelope.get("request") if isinstance(envelope, dict) else {}
@@ -190,9 +186,6 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
         from .accounts.manager import AccountManager
         from .accounts.ratelimit import mark_rate_limited
         from .accounts.state import ModelFamily, HeaderStyle
-        from .config import get_config
-
-        config = get_config()
         manager = AccountManager.load_from_disk()
         active = manager.get_current_account_for_family("gemini")
         if active:
@@ -235,6 +228,17 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
     from .transform.response import rewrite_preview_access_error
 
     if not response.is_success:
+        # Mark endpoint as failed on server errors so fallback chain activates
+        if response.status_code >= 500:
+            try:
+                from .endpoints import mark_endpoint_failed
+                req_url = str(response.request.url)
+                from urllib.parse import urlparse
+                parsed = urlparse(req_url)
+                endpoint = f"https://{parsed.netloc}"
+                mark_endpoint_failed(endpoint)
+            except Exception:
+                pass
         return
 
     try:
