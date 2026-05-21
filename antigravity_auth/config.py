@@ -171,15 +171,19 @@ def load_config_from_yaml(yaml_path: Path) -> Config | None:
 
 
 _config_cache: Config | None = None
+_config_cache_time: float = 0.0
+_CONFIG_CACHE_TTL_SECONDS: float = 30.0  # re-read config.yaml every 30s
 
 
 def get_config(force_reload: bool = False) -> Config:
-    global _config_cache
+    global _config_cache, _config_cache_time
 
     if force_reload:
         _config_cache = None
 
-    if _config_cache is not None:
+    import time as _time
+    now = _time.time()
+    if _config_cache is not None and (now - _config_cache_time) < _CONFIG_CACHE_TTL_SECONDS:
         return _config_cache
 
     config = DEFAULT_CONFIG
@@ -191,13 +195,15 @@ def get_config(force_reload: bool = False) -> Config:
 
     config = apply_env_overrides(config)
     _config_cache = config
+    _config_cache_time = _time.time()
     return config
 
 
 def invalidate_config_cache() -> None:
     """Invalidate the configuration cache, forcing a reload on next get_config call."""
-    global _config_cache
+    global _config_cache, _config_cache_time
     _config_cache = None
+    _config_cache_time = 0.0
 
 
 def apply_env_overrides(config: Config) -> Config:
