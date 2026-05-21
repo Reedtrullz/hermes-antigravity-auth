@@ -125,3 +125,23 @@ class TestRequestHook(unittest.TestCase):
         new_body = json.loads(request.content)
         self.assertEqual(new_body["project"], "my-gcp-project-123")
         self.assertEqual(new_body["model"], "claude-sonnet-4-6")
+
+    def test_preserves_authorization_header(self):
+        """Authorization header must survive the request hook."""
+        request = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+            content=json.dumps({
+                "project": "test",
+                "model": "gemini-3-flash-preview",
+                "request": {"contents": []},
+            }).encode("utf-8"),
+            headers={
+                "Authorization": "Bearer ya29.test-token-abc123",
+                "Content-Type": "application/json",
+            },
+        )
+        self.hook(request)
+        auth = request.headers.get("Authorization", "")
+        self.assertEqual(auth, "Bearer ya29.test-token-abc123",
+                         "Authorization header must be preserved")

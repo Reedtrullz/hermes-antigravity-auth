@@ -114,7 +114,7 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     # Replace headers with randomized Antigravity headers
     new_headers = build_antigravity_headers(header_style=header_style)
     for key in list(request.headers.keys()):
-        if key.lower() not in ("host", "content-type", "content-length", "accept-encoding"):
+        if key.lower() not in ("host", "authorization", "content-type", "accept", "accept-encoding"):
             del request.headers[key]
     for key, val in new_headers.items():
         request.headers[key] = val
