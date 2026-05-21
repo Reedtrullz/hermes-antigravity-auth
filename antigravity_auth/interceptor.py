@@ -63,6 +63,21 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         header_style=header_style,
     )
 
+    # --- Endpoint fallback chain (daily → autopush → prod) ---
+    from .constants import (
+        ANTIGRAVITY_ENDPOINT_PROD,
+    )
+    from .endpoints import select_endpoint
+
+    # Rewrite URL to use Antigravity endpoint
+    endpoint = select_endpoint(config)
+    old_url = str(request.url)
+    new_url = old_url.replace(
+        "https://cloudcode-pa.googleapis.com", endpoint
+    )
+    if new_url != old_url:
+        request.url = httpx.URL(new_url)
+
     # Replace the body
     request.content = json.dumps(envelope).encode("utf-8")
 

@@ -123,3 +123,21 @@ class CapacityRetryTracker:
   @property
   def max_backoff_ms(self) -> int:
     return self._max_backoff_ms
+
+
+def select_endpoint(config=None):
+    """Select the Antigravity endpoint based on config.
+
+    Returns one of: ANTIGRAVITY_ENDPOINT_DAILY, _AUTOPUSH, or _PROD.
+    Default is PROD unless config specifies a fallback strategy.
+
+    Args:
+        config: Optional Config dataclass instance. If None, returns PROD.
+    """
+    from .constants import (
+        ANTIGRAVITY_ENDPOINT_PROD,
+        ANTIGRAVITY_ENDPOINT_DAILY,
+        ANTIGRAVITY_ENDPOINT_AUTOPUSH,
+    )
+    # Default to prod for now — future: respect config.scheduling_mode
+    return ANTIGRAVITY_ENDPOINT_PROD
