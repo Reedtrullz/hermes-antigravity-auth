@@ -75,6 +75,9 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
 
     # Replace the body (httpx 0.28 Request.content is read-only — use _content)
     request._content = json.dumps(envelope).encode("utf-8")
+    # Content-Length is now stale — let httpx recompute
+    request.headers.pop("Content-Length", None)
+    request.headers.pop("content-length", None)
 
     # --- Strip Claude thinking blocks when keep_thinking=False ---
     from .transform.thinking import strip_all_thinking_blocks
