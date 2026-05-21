@@ -59,12 +59,7 @@ def select_endpoint(config=None):
     Args:
         config: Optional Config dataclass instance.
     """
-    header_style = "gemini-cli" if (config is not None and config.cli_first) else "antigravity"
-    endpoints = _endpoint_provider.get_endpoints(header_style)
-    for endpoint in endpoints:
-        if not _endpoint_provider.is_failed(endpoint):
-            return endpoint
-    # All endpoints failed — return prod as last resort
+    # Default to prod for now — future: respect config.scheduling_mode
     return ANTIGRAVITY_ENDPOINT_PROD
 
 
