@@ -169,6 +169,17 @@ hermes -z "Hello" --provider antigravity --model claude-opus-4-6-thinking
 | **Session recovery** | Auto-recover from tool errors |
 | **Google Search** | Web search grounding for Gemini models |
 
+### How It Works
+
+The plugin intercepts all HTTP requests going to Google's Cloud Code endpoint and transforms them:
+
+1. **Request transformation**: Code Assist envelope → Antigravity envelope with randomized headers, device fingerprints, and style-appropriate user agents
+2. **Schema sanitization**: Tool schemas are cleaned of unsupported JSON Schema keywords (`const`, `$ref`, `$defs`, etc.)
+3. **Thinking block stripping**: Claude's extended thinking blocks are stripped from outgoing requests (fresh thinking is generated each turn)
+4. **Response unwrapping**: Antigravity's response envelope is unwrapped back to standard Gemini format
+5. **Multi-account rotation**: Accounts rotate automatically on rate limits with health-score-based selection
+6. **Token refresh**: Access tokens are automatically refreshed on 401 responses
+
 ### Available Models
 
 **Antigravity quota** (default for Claude and Gemini):
@@ -366,8 +377,6 @@ continue  # triggers auto-recovery
 ```
 
 ### Known Limitations
-
-**Claude models** (`claude-opus-4-6-thinking`, `claude-sonnet-4-6`) are listed in the model picker but may return 404 through the basic `--provider ag` path. These models require the Antigravity transform middleware (custom headers, request wrapping) that the `hermes antigravity` CLI plugin provides. Full Claude support depends on Hermes' model-provider plugin architecture — the model names are registered for forward compatibility.
 
 **Model name suffixes**: All Gemini models at the Cloud Code endpoint require the `-preview` suffix (e.g., `gemini-3-flash-preview`). The non-preview names (`gemini-3-flash`) were retired by Google. See [Model Not Found](#model-not-found) above.
 
