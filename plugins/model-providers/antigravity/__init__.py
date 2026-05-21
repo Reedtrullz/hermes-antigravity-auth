@@ -34,3 +34,21 @@ antigravity = AntigravityProfile(
 )
 
 register_provider(antigravity)
+
+# Self-register in Hermes' PROVIDER_REGISTRY so resolve_provider() can find it.
+# oauth_external providers are not auto-discovered by PROVIDER_REGISTRY's
+# extension logic (which only picks up api_key providers), so we add ourselves.
+try:
+    from hermes_cli.auth import PROVIDER_REGISTRY, ProviderConfig
+    if "antigravity" not in PROVIDER_REGISTRY:
+        PROVIDER_REGISTRY["antigravity"] = ProviderConfig(
+            id="antigravity",
+            name="Google Antigravity",
+            auth_type="oauth_external",
+            inference_base_url="https://cloudcode-pa.googleapis.com",
+        )
+        for _alias in antigravity.aliases:
+            if _alias not in PROVIDER_REGISTRY:
+                PROVIDER_REGISTRY[_alias] = PROVIDER_REGISTRY["antigravity"]
+except Exception:
+    pass
