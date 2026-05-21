@@ -1,6 +1,10 @@
-"""HTTP interceptor — patches GeminiCloudCodeClient to inject Antigravity
-headers via httpx event hooks. Body stays in Code Assist format — the
-Antigravity API accepts it with the correct headers and User-Agent."""
+"""HTTP interceptor — wraps GeminiCloudCodeClient's httpx client to inject
+Antigravity headers AND optionally transform request bodies before serialization.
+
+Architecture: a proxy object intercepts post()/stream() calls, modifying the
+json=body dict and headers BEFORE httpx processes them. httpx serializes the
+modified dict fresh, computing Content-Length correctly — no transport hacking.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from typing import Any
 import httpx
 
 from .config import get_config
+from .endpoints import select_endpoint
 from .transform.envelope import (
     build_antigravity_headers,
     resolve_model_for_header_style,
@@ -22,52 +27,111 @@ _PATCHED = False
 _ORIGINAL_INIT = None
 
 
-def _antigravity_request_hook(request: httpx.Request) -> None:
-    """Transform headers to Antigravity style. Does NOT modify body."""
-    if "cloudcode-pa.googleapis.com" not in str(request.url):
-        return
+# =============================================================================
+# HTTP proxy — intercepts post()/stream() before httpx serializes the body
+# =============================================================================
 
-    config = get_config()
-    
-    # Read body to determine model and header style
+class _HttpProxy:
+    """Wraps an httpx.Client, transforming body and headers on post()/stream()."""
+
+    def __init__(self, original: httpx.Client):
+        self._original = original
+
+    # --- passthrough attributes ---
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._original, name)
+
+    # --- intercept post ---
+    def post(self, url, **kwargs: Any) -> httpx.Response:
+        url = self._transform(url, kwargs)
+        return self._original.post(url, **kwargs)
+
+    # --- intercept stream ---
+    def stream(self, method, url, **kwargs: Any):
+        url = self._transform(url, kwargs)
+        return self._original.stream(method, url, **kwargs)
+
+    # --- core transformation ---
+    def _transform(self, url: Any, kwargs: dict) -> Any:
+        """Transform body, headers, and URL. Returns (possibly rewritten) URL."""
+        url_str = str(url)
+        if "cloudcode-pa.googleapis.com" not in url_str:
+            return url
+
+        body = kwargs.get("json")
+        if not isinstance(body, dict) or "request" not in body:
+            return url
+
+        config = get_config()
+        model = str(body.get("model", ""))
+        header_style = "gemini-cli" if config.cli_first else "antigravity"
+        model = resolve_model_for_header_style(model, header_style)
+
+        # --- Body mutation: thinking blocks ---
+        if _is_claude_model(model) and not config.keep_thinking:
+            inner = body.get("request", {})
+            if isinstance(inner, dict) and "contents" in inner:
+                from .transform.thinking import strip_thinking_blocks
+                inner["contents"] = strip_thinking_blocks(inner["contents"], is_claude=True)
+
+        # --- Body mutation: schema sanitization ---
+        if config.claude_tool_hardening:
+            inner = body.get("request", {})
+            tools = inner.get("tools") if isinstance(inner, dict) else None
+            if isinstance(tools, list):
+                from .transform.schema import clean_json_schema
+                for tool in tools:
+                    if isinstance(tool, dict):
+                        fds = tool.get("functionDeclarations")
+                        if isinstance(fds, list):
+                            for fd in fds:
+                                if isinstance(fd, dict) and "parameters" in fd:
+                                    fd["parameters"] = clean_json_schema(fd["parameters"])
+                        elif "parameters" in tool:
+                            tool["parameters"] = clean_json_schema(tool["parameters"])
+
+        # --- URL rewriting ---
+        endpoint = select_endpoint(config)
+        new_url = url_str.replace("https://cloudcode-pa.googleapis.com", endpoint)
+        if new_url != url_str:
+            url = httpx.URL(new_url) if isinstance(url, str) else new_url
+
+        # --- Header injection ---
+        headers = kwargs.get("headers")
+        if headers is None:
+            headers = {}
+            kwargs["headers"] = headers
+        new_headers = build_antigravity_headers(header_style=header_style)
+        for key, val in new_headers.items():
+            headers[key] = val
+
+        # --- Fingerprint ---
+        try:
+            from .fingerprint import generate_fingerprint
+            fp = generate_fingerprint()
+            if fp:
+                cm = fp.get("clientMetadata")
+                if cm:
+                    headers["Client-Metadata"] = json.dumps(cm)
+        except Exception:
+            pass
+
+        return url
+
+
+def _is_claude_model(model: str) -> bool:
     try:
-        body = json.loads(request.read())
+        from .transform.messages import is_claude_model
+        return is_claude_model(model)
     except Exception:
-        return
-    
-    if not isinstance(body, dict) or "request" not in body:
-        return
-    
-    model = str(body.get("model", ""))
-    header_style = "gemini-cli" if config.cli_first else "antigravity"
-    model = resolve_model_for_header_style(model, header_style)
-    
-    # Replace headers with Antigravity-style headers
-    new_headers = build_antigravity_headers(header_style=header_style)
-    for key in list(request.headers.keys()):
-        if key.lower() not in ("host", "authorization", "content-type", "accept", "accept-encoding", "content-length"):
-            del request.headers[key]
-    for key, val in new_headers.items():
-        request.headers[key] = val
-
-    # Inject fingerprint
-    try:
-        from .fingerprint import generate_fingerprint
-        fp = generate_fingerprint()
-        if fp:
-            # Only inject Client-Metadata, keep our Antigravity UA
-            cm = fp.get("clientMetadata")
-            if cm:
-                request.headers["Client-Metadata"] = json.dumps(cm)
-    except Exception:
-        pass
-
-    logger.debug("Antigravity headers injected for model=%s", model)
+        return "claude" in model.lower()
 
 
-def _antigravity_response_hook(response: httpx.Response) -> None:
-    """Handle side effects: 401 token refresh, 429 account rotation, 5xx endpoint marking."""
-    from .config import get_config
+# =============================================================================
+# Response hook (side effects only — no body mutation)
+# =============================================================================
+
+def _response_hook(response: httpx.Response) -> None:
     config = get_config()
 
     if response.status_code == 401 and config.proactive_token_refresh:
@@ -103,7 +167,8 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                     try: retry = int(rh)
                     except ValueError: pass
                 mark_rate_limited(active, float(retry * 1000), "gemini", "antigravity")
-                logger.warning("Rate limited on %s", active.email)
+                mark_rate_limited(active, float(retry * 1000), "gemini", "gemini-cli")
+                mgr.save_to_disk()
                 next_acc = mgr.get_current_or_next_for_family("gemini", strategy="hybrid")
                 if next_acc and next_acc.index != active.index:
                     from .token import refresh_access_token
@@ -116,6 +181,8 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                             expires_ms=r.get("expires"),
                         )
                         logger.info("Rotated to %s after rate limit", next_acc.email)
+                else:
+                    logger.debug("No other account available for rotation")
         except Exception as e:
             logger.warning("Rate limit handler error: %s", e)
 
@@ -129,15 +196,16 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
             pass
 
 
-def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
-    """Add request/response event hooks for header transformation."""
-    if not http_client.event_hooks.get("request"):
-        http_client.event_hooks["request"] = []
+# =============================================================================
+# Install
+# =============================================================================
+
+def _wrap_http_client(http_client: httpx.Client) -> _HttpProxy:
+    proxy = _HttpProxy(http_client)
     if not http_client.event_hooks.get("response"):
         http_client.event_hooks["response"] = []
-    http_client.event_hooks["request"].append(_antigravity_request_hook)
-    http_client.event_hooks["response"].append(_antigravity_response_hook)
-    return http_client
+    http_client.event_hooks["response"].append(_response_hook)
+    return proxy
 
 
 def install() -> bool:
@@ -152,11 +220,11 @@ def install() -> bool:
 
     def _patched_init(self, *args: Any, **kwargs: Any) -> None:
         _ORIGINAL_INIT(self, *args, **kwargs)
-        _wrap_http_client(self._http)
+        self._http = _wrap_http_client(self._http)
 
     GeminiCloudCodeClient.__init__ = _patched_init
     _PATCHED = True
-    logger.info("Antigravity interceptor installed (headers-only)")
+    logger.info("Antigravity interceptor installed (body + headers via proxy)")
     return True
 
 
