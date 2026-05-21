@@ -114,7 +114,7 @@ class _AntigravityTransport:
         endpoint = select_endpoint(config)
         old_url = url_str if isinstance(url_str, str) else str(request.url)
         new_url_str = old_url.replace("https://cloudcode-pa.googleapis.com", endpoint)
-        new_url = httpcore.URL(new_url_str.encode() if isinstance(new_url_str, str) else new_url_str)
+        new_url = httpcore.URL(new_url_str)
 
         # --- Rewrite headers ---
         new_headers = build_antigravity_headers(header_style=header_style)
