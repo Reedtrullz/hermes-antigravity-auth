@@ -132,23 +132,20 @@ Sensitive files:
 
 ## HTTP Interception
 
-The interceptor (`antigravity_auth/interceptor.py`) is the glue layer connecting the transform modules to the runtime. On plugin load, `hermes_plugin.py` calls `install()` which:
+The interceptor (`antigravity_auth/interceptor.py`) is a 134-line module that injects Antigravity-specific headers into every Cloud Code API request. On plugin load, `hermes_plugin.py` calls `install()` which monkey-patches `GeminiCloudCodeClient.__init__` to add httpx request/response event hooks to the internal `self._http` client.
 
-1. Saves a reference to the original `GeminiCloudCodeClient.__init__`
-2. Replaces it with a patched version that wraps `self._http` with httpx event hooks
-3. The **request hook** transforms every outgoing request:
-   - Parses the Code Assist envelope (`{project, model, user_prompt_id, request}`)
-   - Rewrites to the Antigravity envelope (`{project, model, userAgent, requestId, requestType, request}`)
-   - Replaces headers with randomized Antigravity-style headers + device fingerprint
-   - Strips Claude thinking blocks (when `keep_thinking: false`)
-   - Sanitizes tool schemas (when `claude_tool_hardening: true`)
-   - Rewrites the URL through the endpoint fallback chain
-4. The **response hook** handles responses:
-   - Refreshes OAuth tokens on 401 (when `proactive_token_refresh: true`)
-   - Rotates accounts on 429 rate limits (when `switch_on_first_rate_limit: true`)
-   - Marks endpoints as failed on 5xx errors for fallback chain
-   - Rewrites preview access errors to actionable messages
-   - Detects recoverable session errors
+The **request hook** transforms headers without touching the request body:
+- Reads the Code Assist envelope to determine the model
+- Replaces `User-Agent`, `X-Goog-Api-Client`, and `Client-Metadata` with randomized Antigravity-style headers
+- Injects a per-request device fingerprint into `Client-Metadata`
+- Preserves critical headers: `Authorization`, `Content-Type`, `Host`, `Accept`, `Content-Length`
+
+The **response hook** handles side effects:
+- Refreshes OAuth tokens on 401 (when `proactive_token_refresh: true`)
+- Rotates accounts and syncs tokens on 429 rate limits (when `switch_on_first_rate_limit: true`)
+- Marks endpoints as failed on 5xx server errors for the endpoint fallback chain
+
+**Why headers-only works:** The Code Assist request envelope (`{project, model, user_prompt_id, request}`) is structurally compatible with the Antigravity API. The API routes requests based on headers and `model` field — it doesn't require the `userAgent`/`requestId`/`requestType` envelope fields. The key to unlocking Claude (and other non-Gemini models) is the Antigravity-style `User-Agent` and `Client-Metadata` headers.
 
 ---
 
