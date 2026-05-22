@@ -18,6 +18,65 @@ logger = logging.getLogger(__name__)
 
 _PATCHED = False
 _ORIGINAL_INIT = None
+_ORIGINAL_WRAP_CODE_ASSIST = None
+
+
+def _inject_tool_call_ids(inner_request: dict) -> None:
+  """Inject auto-generated IDs into functionCall/functionResponse for Claude.
+
+  The Antigravity backend converts Gemini functionCall parts to Anthropic
+  tool_use blocks when routing to Claude models. Anthropic requires every
+  tool_use to have an ``id`` field, and every tool_result to have a matching
+  ``tool_use_id``. Without IDs, the backend returns HTTP 400:
+  ``messages.N.content.M.tool_use.id: Field required``.
+
+  Follows the TypeScript original's two-pass approach (request.ts:1353-1416):
+  1. Assign sequential IDs to functionCall objects (inside the object, NOT at
+     the Part level — the Gemini proto rejects unknown Part fields)
+  2. Match functionResponse objects to their calls by name (FIFO queue)
+
+  Mutates ``inner_request["contents"]`` in-place.
+  """
+  contents = inner_request.get("contents")
+  if not isinstance(contents, list):
+    return
+
+  counter = 0
+  pending: dict = {}  # functionName -> [id, id, ...] (FIFO queue)
+
+  # Pass 1: assign IDs to functionCalls, build FIFO queues per name
+  for content in contents:
+    if not isinstance(content, dict):
+      continue
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+      continue
+    for part in parts:
+      if not isinstance(part, dict):
+        continue
+      fc = part.get("functionCall")
+      if isinstance(fc, dict) and not fc.get("id"):
+        counter += 1
+        fc["id"] = f"tool-call-{counter}"
+        name = str(fc.get("name") or f"tool-{counter}")
+        pending.setdefault(name, []).append(fc["id"])
+
+  # Pass 2: match functionResponses to pending calls (FIFO per name)
+  for content in contents:
+    if not isinstance(content, dict):
+      continue
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+      continue
+    for part in parts:
+      if not isinstance(part, dict):
+        continue
+      fr = part.get("functionResponse")
+      if isinstance(fr, dict) and not fr.get("id"):
+        name = str(fr.get("name") or "")
+        queue = pending.get(name, [])
+        if queue:
+          fr["id"] = queue.pop(0)
 
 
 def _antigravity_request_hook(request: httpx.Request) -> None:
@@ -165,23 +224,34 @@ def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
 
 
 def install() -> bool:
-    global _PATCHED, _ORIGINAL_INIT
-    if _PATCHED:
-        return False
-    try:
-        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
-    except ImportError:
-        return False
-    _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
+  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST
+  if _PATCHED:
+    return False
+  try:
+    from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient, wrap_code_assist_request
+  except ImportError:
+    return False
+  _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
+  _ORIGINAL_WRAP_CODE_ASSIST = wrap_code_assist_request
 
-    def _patched_init(self, *args: Any, **kwargs: Any) -> None:
-        _ORIGINAL_INIT(self, *args, **kwargs)
-        _wrap_http_client(self._http)
+  def _patched_init(self, *args: Any, **kwargs: Any) -> None:
+    _ORIGINAL_INIT(self, *args, **kwargs)
+    _wrap_http_client(self._http)
 
-    GeminiCloudCodeClient.__init__ = _patched_init
-    _PATCHED = True
-    logger.info("Antigravity interceptor installed (headers + response hooks)")
-    return True
+  def _patched_wrap_code_assist(*, project_id, model, inner_request, user_prompt_id=None):
+    if isinstance(inner_request, dict) and isinstance(model, str) and model.startswith("claude"):
+      _inject_tool_call_ids(inner_request)
+    return _ORIGINAL_WRAP_CODE_ASSIST(
+      project_id=project_id, model=model,
+      inner_request=inner_request, user_prompt_id=user_prompt_id,
+    )
+
+  GeminiCloudCodeClient.__init__ = _patched_init
+  import agent.gemini_cloudcode_adapter as gca
+  gca.wrap_code_assist_request = _patched_wrap_code_assist
+  _PATCHED = True
+  logger.info("Antigravity interceptor installed (headers + tool_call id injection + response hooks)")
+  return True
 
 
 def is_installed() -> bool:
