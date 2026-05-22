@@ -57,6 +57,8 @@ class Config:
   proactive_refresh_check_interval_seconds: int = 300
   max_rate_limit_wait_seconds: int = 300
   quota_fallback: bool = False
+  # DEPRECATED — Gemini CLI sunsets 2026-06-18.  Use the default
+  # antigravity header style (Electron UA + fingerprint) instead.
   cli_first: bool = False
   account_selection_strategy: str = "hybrid"
   pid_offset_enabled: bool = False

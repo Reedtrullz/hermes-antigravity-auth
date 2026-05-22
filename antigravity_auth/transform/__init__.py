@@ -12,6 +12,7 @@ from .envelope import (
 from .messages import (
   is_claude_model,
   is_gemini_model,
+  is_gpt_oss_model,
   parse_data_url,
   transform_messages_to_contents,
 )
@@ -51,6 +52,7 @@ __all__ = [
   "is_antigravity_request",
   "is_claude_model",
   "is_gemini_model",
+  "is_gpt_oss_model",
   "is_thinking_part",
   "parse_data_url",
   "resolve_model_for_header_style",

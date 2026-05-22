@@ -36,6 +36,13 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     
     model = str(body.get("model", ""))
     header_style = "gemini-cli" if config.cli_first else "antigravity"
+
+    if header_style == "gemini-cli":
+        logger.warning(
+            "Gemini CLI header style is DEPRECATED — Gemini CLI sunsets 2026-06-18. "
+            "Set cli_first: false in config to use the Antigravity header style."
+        )
+
     model = resolve_model_for_header_style(model, header_style)
     
     new_headers = build_antigravity_headers(header_style=header_style)

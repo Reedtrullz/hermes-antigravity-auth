@@ -5,6 +5,7 @@ import unittest
 from antigravity_auth.transform.messages import (
   is_claude_model,
   is_gemini_model,
+  is_gpt_oss_model,
   parse_data_url,
   transform_messages_to_contents,
 )
@@ -14,22 +15,42 @@ class TestIsClaudeModel(unittest.TestCase):
   def test_claude_model(self):
     self.assertTrue(is_claude_model("claude-opus-4-6-thinking"))
     self.assertTrue(is_claude_model("claude-sonnet-4-6"))
+    self.assertTrue(is_claude_model("claude-sonnet-4-6-thinking"))
 
   def test_non_claude_model(self):
     self.assertFalse(is_claude_model("gemini-3-flash"))
     self.assertFalse(is_claude_model("gemini-2.5-pro"))
+    self.assertFalse(is_claude_model("gpt-oss-120b-medium"))
 
 
 class TestIsGeminiModel(unittest.TestCase):
   def test_gemini_model(self):
     self.assertTrue(is_gemini_model("gemini-3-flash"))
     self.assertTrue(is_gemini_model("gemini-2.5-pro"))
+    self.assertTrue(is_gemini_model("gemini-3.1-pro-high"))
+    self.assertTrue(is_gemini_model("gemini-3.1-pro-low"))
+    self.assertTrue(is_gemini_model("gemini-3.5-flash-high"))
+    self.assertTrue(is_gemini_model("gemini-3.5-flash-medium"))
 
   def test_gemini_excludes_claude(self):
     self.assertFalse(is_gemini_model("claude-opus-4-6"))
+    self.assertFalse(is_gemini_model("claude-sonnet-4-6-thinking"))
 
   def test_gemini_name_does_not_contain_claude(self):
     self.assertTrue(is_gemini_model("gemini-3-pro"))
+
+  def test_gemini_excludes_gpt_oss(self):
+    self.assertFalse(is_gemini_model("gpt-oss-120b-medium"))
+
+
+class TestIsGptOssModel(unittest.TestCase):
+  def test_gpt_oss_model(self):
+    self.assertTrue(is_gpt_oss_model("gpt-oss-120b-medium"))
+
+  def test_non_gpt_oss_model(self):
+    self.assertFalse(is_gpt_oss_model("claude-sonnet-4-6"))
+    self.assertFalse(is_gpt_oss_model("gemini-3.5-flash-high"))
+    self.assertFalse(is_gpt_oss_model("gemini-3.1-pro-low"))
 
 
 class TestParseDataUrl(unittest.TestCase):

@@ -86,6 +86,31 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
         )
         self.assertEqual("gemini-3-flash", result)
 
+    # New Antigravity 2.0 models
+    def test_gemini_cli_strips_prefix_3_5_flash(self):
+        result = resolve_model_for_header_style(
+            "antigravity-gemini-3.5-flash", "gemini-cli"
+        )
+        self.assertEqual("gemini-3.5-flash", result)
+
+    def test_gemini_cli_strips_prefix_3_1_pro_high(self):
+        result = resolve_model_for_header_style(
+            "antigravity-gemini-3.1-pro", "gemini-cli"
+        )
+        self.assertEqual("gemini-3.1-pro", result)
+
+    def test_gemini_cli_strips_prefix_sonnet_thinking(self):
+        result = resolve_model_for_header_style(
+            "antigravity-claude-sonnet-4-6-thinking", "gemini-cli"
+        )
+        self.assertEqual("claude-sonnet-4-6-thinking", result)
+
+    def test_gemini_cli_strips_prefix_gpt_oss(self):
+        result = resolve_model_for_header_style(
+            "antigravity-gpt-oss-120b", "gemini-cli"
+        )
+        self.assertEqual("gpt-oss-120b", result)
+
 
 class TestBuildAntigravityUrl(unittest.TestCase):
     def test_streaming_has_alt_sse(self):

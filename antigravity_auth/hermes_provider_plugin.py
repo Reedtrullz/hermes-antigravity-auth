@@ -35,17 +35,29 @@ class AntigravityProfile(ProviderProfile):
 
 
 # Model names MUST match what the Cloud Code API (cloudcode-pa.googleapis.com)
-# actually recognises.  Non-preview Gemini names ("gemini-3-flash") return 404;
-# only the -preview suffixed names work there.  Claude names are passed through
-# as-is — Antigravity forwards those to the Anthropic backend.
+# actually recognises.  Antigravity 2.0 (May 2026) uses bare names without the
+# -preview suffix for 3.1+ models.  Gemini 3.0 keeps the legacy -preview suffix.
+# Claude names are passed through as-is — Antigravity forwards those to the
+# Anthropic backend.
 ANTIGRAVITY_MODELS = (
+  # Claude models
   "claude-opus-4-6-thinking",
+  "claude-sonnet-4-6-thinking",
   "claude-sonnet-4-6",
-  "gemini-3.1-pro-preview",
+  # Gemini 3.5 (latest)
+  "gemini-3.5-flash-high",
+  "gemini-3.5-flash-medium",
+  # Gemini 3.1
+  "gemini-3.1-pro-high",
+  "gemini-3.1-pro-low",
+  # Gemini 3.0 (legacy -preview suffix)
   "gemini-3-pro-preview",
   "gemini-3-flash-preview",
+  # Gemini 2.5 (legacy)
   "gemini-2.5-pro",
   "gemini-2.5-flash",
+  # GPT-OSS
+  "gpt-oss-120b-medium",
 )
 
 
@@ -57,7 +69,7 @@ antigravity = AntigravityProfile(
   env_vars=(),
   base_url="cloudcode-pa://google",
   auth_type="oauth_external",
-  default_aux_model="gemini-3-flash-preview",
+  default_aux_model="gemini-3.5-flash-medium",
   fallback_models=ANTIGRAVITY_MODELS,
   default_headers={},
 )

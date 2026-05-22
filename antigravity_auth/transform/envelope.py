@@ -33,16 +33,29 @@ ANTIGRAVITY_API_CLIENTS = [
 ]
 
 MODEL_NAME_MAP: dict[str, str] = {
+    # Antigravity-prefixed names → Cloud Code API model IDs
     "antigravity-gemini-3-pro": "gemini-3-pro-preview",
-    "antigravity-gemini-3.1-pro": "gemini-3.1-pro-preview",
+    "antigravity-gemini-3.1-pro": "gemini-3.1-pro-high",
+    "antigravity-gemini-3.1-pro-low": "gemini-3.1-pro-low",
     "antigravity-gemini-3-flash": "gemini-3-flash-preview",
+    "antigravity-gemini-3.5-flash": "gemini-3.5-flash-medium",
     "antigravity-claude-sonnet-4-6": "claude-sonnet-4-6",
+    "antigravity-claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
     "antigravity-claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
+    "antigravity-gpt-oss-120b": "gpt-oss-120b-medium",
+    # Bare model ID passthroughs
     "gemini-3-pro-preview": "gemini-3-pro-preview",
-    "gemini-3.1-pro-preview": "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-high": "gemini-3.1-pro-high",
+    "gemini-3.1-pro-low": "gemini-3.1-pro-low",
     "gemini-3-flash-preview": "gemini-3-flash-preview",
+    "gemini-3.5-flash-high": "gemini-3.5-flash-high",
+    "gemini-3.5-flash-medium": "gemini-3.5-flash-medium",
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-pro": "gemini-2.5-pro",
+    "claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
+    "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
+    "gpt-oss-120b-medium": "gpt-oss-120b-medium",
 }
 
 
@@ -98,6 +111,8 @@ def build_antigravity_headers(
   header_style: HeaderStyle = "antigravity",
   fingerprint_user_agent: str | None = None,
 ) -> dict[str, str]:
+  # DEPRECATED: gemini-cli header style — Gemini CLI sunsets 2026-06-18.
+  # Use the default 'antigravity' style (Electron UA + fingerprint).
   if header_style == "gemini-cli":
     return GEMINI_CLI_HEADERS.copy()
   

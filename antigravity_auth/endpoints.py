@@ -10,8 +10,9 @@ class EndpointProvider:
   """Manages the Antigravity API endpoint fallback chain.
 
   Endpoints are tried in order: daily → autopush → prod.
-  For Gemini CLI header style, sandbox endpoints (daily, autopush)
-  are skipped since they only work with Antigravity quota.
+  For Gemini CLI header style (DEPRECATED — sunsets 2026-06-18),
+  sandbox endpoints (daily, autopush) are skipped since they only
+  work with Antigravity quota.
   """
 
   def __init__(self) -> None:

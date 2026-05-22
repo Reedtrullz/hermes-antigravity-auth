@@ -213,9 +213,9 @@ def verify_account_access(
         headers["x-goog-user-project"] = project_id
 
     request_body = {
-        "model": "gemini-3-flash-preview",
+        "model": "gemini-3.5-flash-medium",
         "request": {
-            "model": "gemini-3-flash-preview",
+            "model": "gemini-3.5-flash-medium",
             "contents": [{"role": "user", "parts": [{"text": "ping"}]}],
             "generationConfig": {"maxOutputTokens": 1, "temperature": 0},
         },

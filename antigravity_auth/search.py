@@ -24,7 +24,7 @@ except ImportError:
     get_platform,
   )
 
-SEARCH_MODEL = "gemini-2.5-flash"
+SEARCH_MODEL = "gemini-3.5-flash-medium"
 
 SEARCH_TIMEOUT_MS = 60000
 

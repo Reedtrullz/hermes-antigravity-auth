@@ -68,6 +68,11 @@ ANTIGRAVITY_LOAD_ENDPOINTS = [
 
 ANTIGRAVITY_VERSION_FALLBACK = "1.23.0"
 
+# Gemini CLI headers — DEPRECATED as of May 2026.
+# Google is sunsetting the Gemini CLI in favour of Antigravity CLI (agy).
+# Gemini CLI access ends 2026-06-18.  These headers and the dual-quota
+# pool they represent will stop working after that date.
+# Prefer the 'antigravity' header style (Electron UA + fingerprint) going forward.
 GEMINI_CLI_HEADERS = {
     "User-Agent": "google-api-nodejs-client/9.15.1",
     "X-Goog-Api-Client": "gl-node/22.17.0",

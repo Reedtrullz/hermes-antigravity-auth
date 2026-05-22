@@ -14,6 +14,10 @@ def is_gemini_model(model: str) -> bool:
   return "gemini" in lower and "claude" not in lower
 
 
+def is_gpt_oss_model(model: str) -> bool:
+  return "gpt-oss" in model.lower()
+
+
 def parse_data_url(url: str) -> tuple[str, str] | None:
   """Extract (mime_type, base64_data) from a data:mime;base64,DATA URL."""
   match = re.match(r"^data:([^;]+);base64,(.+)$", url, re.DOTALL)
