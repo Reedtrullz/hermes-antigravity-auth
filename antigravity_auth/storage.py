@@ -128,6 +128,11 @@ def sync_token_to_auth_json(
     set_active: bool = True
 ) -> None:
     """
+    Dual-store architecture: Hermes v0.14 routes Cloud Code requests through
+    agent.google_oauth which reads auth/google_oauth.json, while the Antigravity
+    CLI and plugin manage auth.json. This function writes to auth.json.
+    Use sync_token_to_google_oauth() in cli.py for the google_oauth.json store.
+    
     Updates or inserts the 'antigravity' key in auth.json provider list.
     Saves auth.json using process/thread-safe write lock.
     """

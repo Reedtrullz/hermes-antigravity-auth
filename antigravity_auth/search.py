@@ -243,7 +243,7 @@ def execute_search(
     with urllib.request.urlopen(req, timeout=timeout_s) as response:
       resp_bytes = response.read()
 
-    resp_data: dict[str, Any] = json.loads(resp_bytes.decode("utf-8"))
+    resp_data: dict[str, Any] = json.loads(resp_bytes.decode("utf-8", errors="ignore"))
     result = parse_search_response(resp_data)
     return format_search_result(result)
   except urllib.error.HTTPError as e:

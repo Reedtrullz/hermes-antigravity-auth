@@ -183,7 +183,7 @@ def refresh_access_token(auth: dict) -> dict:
         )
 
     try:
-        payload = json.loads(resp_bytes.decode("utf-8"))
+        payload = json.loads(resp_bytes.decode("utf-8", errors="ignore"))
     except Exception as e:
         raise AntigravityTokenRefreshError(
             f"Failed to parse token response JSON: {e}",

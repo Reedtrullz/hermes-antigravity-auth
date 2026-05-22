@@ -141,12 +141,11 @@ def sync_token_to_google_oauth(
     email: str | None = None,
     expires_ms: int | None = None,
 ) -> bool:
-    """Sync credentials into Hermes' built-in Google OAuth store.
-
-    Hermes v0.14 routes Cloud Code/Gemini requests through agent.google_oauth,
-    which reads auth/google_oauth.json rather than auth.json. Keeping both
-    stores in sync lets the Antigravity CLI manage accounts while Hermes' native
-    runtime client performs the request transport.
+    """Dual-store architecture: writes to auth/google_oauth.json (Hermes runtime).
+    
+    This is the companion to storage.sync_token_to_auth_json (writes auth.json).
+    Both must be called when switching the active account to prevent the two
+    stores from diverging.
     """
     try:
         from agent.google_oauth import GoogleCredentials, save_credentials

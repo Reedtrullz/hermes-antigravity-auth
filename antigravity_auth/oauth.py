@@ -54,7 +54,7 @@ def decode_state(state: str) -> dict:
     normalized = state.replace("-", "+").replace("_", "/")
     padded = normalized + "=" * ((4 - len(normalized) % 4) % 4)
     json_bytes = base64.b64decode(padded)
-    parsed = json.loads(json_bytes.decode("utf-8"))
+    parsed = json.loads(json_bytes.decode("utf-8", errors="ignore"))
     if not isinstance(parsed, dict) or "verifier" not in parsed:
         raise ValueError("Missing PKCE verifier in state")
     return {
@@ -154,7 +154,7 @@ def fetch_project_id(access_token: str) -> str:
             if status != 200:
                 continue
                 
-            resp_data = json.loads(resp_bytes.decode("utf-8"))
+            resp_data = json.loads(resp_bytes.decode("utf-8", errors="ignore"))
             cloudaicompanion_project = resp_data.get("cloudaicompanionProject")
             if not cloudaicompanion_project:
                 continue
@@ -220,7 +220,7 @@ def exchange_antigravity(code: str, state: str) -> dict:
             error_text = token_bytes.decode("utf-8", errors="ignore")
             return {"type": "failed", "error": error_text}
             
-        token_payload = json.loads(token_bytes.decode("utf-8"))
+        token_payload = json.loads(token_bytes.decode("utf-8", errors="ignore"))
         access_token = token_payload.get("access_token")
         refresh_token = token_payload.get("refresh_token")
         expires_in = token_payload.get("expires_in")
@@ -245,7 +245,7 @@ def exchange_antigravity(code: str, state: str) -> dict:
         email = None
         if user_status == 200:
             try:
-                user_info = json.loads(user_bytes.decode("utf-8"))
+                user_info = json.loads(user_bytes.decode("utf-8", errors="ignore"))
                 email = user_info.get("email")
             except Exception:
                 pass

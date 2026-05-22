@@ -151,7 +151,7 @@ def fetch_quota_from_api(access_token: str, project_id: str) -> list | None:
     try:
         req = urllib.request.Request(url, data=envelope, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
             return data.get("buckets") or []
     except Exception:
         return None
