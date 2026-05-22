@@ -8,7 +8,7 @@ version = "1.6.0"
 description = "Hermes Agent plugin for Antigravity (Google IDE) OAuth model access"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 keywords = ["hermes", "antigravity", "oauth", "google", "ai"]
 classifiers = [
   "Development Status :: 3 - Alpha",

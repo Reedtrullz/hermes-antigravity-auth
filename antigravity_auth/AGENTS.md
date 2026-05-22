@@ -54,7 +54,7 @@ python3 -m pytest -k "test_name_pattern"                      # Filtered
 
 ## Dependencies
 
-- Python >= 3.11 (no f-string backslashes, modern setuptools)
+- Python >= 3.10 (tested on 3.11+) (no f-string backslashes, modern setuptools)
 - `pyyaml` (optional — for YAML config)
 - `pytest`, `pytest-cov` (dev)
 
