@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 _PATCHED = False
 _ORIGINAL_INIT = None
+_ORIGINAL_TRANSLATE_TOOL_CALL = None
+_ORIGINAL_TRANSLATE_TOOL_RESULT = None
 
 
 def _antigravity_request_hook(request: httpx.Request) -> None:
@@ -165,23 +167,46 @@ def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
 
 
 def install() -> bool:
-    global _PATCHED, _ORIGINAL_INIT
-    if _PATCHED:
-        return False
-    try:
-        from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
-    except ImportError:
-        return False
-    _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
+  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_TRANSLATE_TOOL_CALL, _ORIGINAL_TRANSLATE_TOOL_RESULT
+  if _PATCHED:
+    return False
+  try:
+    from agent.gemini_cloudcode_adapter import (
+      GeminiCloudCodeClient,
+      _translate_tool_call_to_gemini as _original_translate,
+      _translate_tool_result_to_gemini as _original_translate_result,
+    )
+  except ImportError:
+    return False
+  _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
+  _ORIGINAL_TRANSLATE_TOOL_CALL = _original_translate
+  _ORIGINAL_TRANSLATE_TOOL_RESULT = _original_translate_result
 
-    def _patched_init(self, *args: Any, **kwargs: Any) -> None:
-        _ORIGINAL_INIT(self, *args, **kwargs)
-        _wrap_http_client(self._http)
+  def _patched_init(self, *args: Any, **kwargs: Any) -> None:
+    _ORIGINAL_INIT(self, *args, **kwargs)
+    _wrap_http_client(self._http)
 
-    GeminiCloudCodeClient.__init__ = _patched_init
-    _PATCHED = True
-    logger.info("Antigravity interceptor installed (headers + response hooks)")
-    return True
+  def _patched_translate_tool_call(tool_call):
+    result = _ORIGINAL_TRANSLATE_TOOL_CALL(tool_call)
+    tc_id = tool_call.get("id")
+    if tc_id:
+      result["id"] = tc_id
+    return result
+
+  def _patched_translate_tool_result(message):
+    result = _ORIGINAL_TRANSLATE_TOOL_RESULT(message)
+    tc_id = message.get("tool_call_id")
+    if tc_id:
+      result["tool_use_id"] = tc_id
+    return result
+
+  GeminiCloudCodeClient.__init__ = _patched_init
+  import agent.gemini_cloudcode_adapter as gca
+  gca._translate_tool_call_to_gemini = _patched_translate_tool_call
+  gca._translate_tool_result_to_gemini = _patched_translate_tool_result
+  _PATCHED = True
+  logger.info("Antigravity interceptor installed (headers + tool_call id fix + response hooks)")
+  return True
 
 
 def is_installed() -> bool:
