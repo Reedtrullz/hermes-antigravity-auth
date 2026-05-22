@@ -1,3 +1,4 @@
+"""Session error detection and recovery toast notifications."""
 from __future__ import annotations
 
 import json

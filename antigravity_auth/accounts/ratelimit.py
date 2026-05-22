@@ -1,3 +1,4 @@
+"""Rate limit handling: reason parsing, exponential backoff, and cooldowns."""
 from __future__ import annotations
 
 import random

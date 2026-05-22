@@ -1,3 +1,4 @@
+"""AccountManager: in-memory multi-account selection with sticky rotation."""
 from __future__ import annotations
 
 import json

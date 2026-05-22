@@ -97,8 +97,9 @@ def start_watchdog() -> None:
         target=_watchdog_loop, daemon=True, name="antigravity-token-watchdog"
     )
     _watchdog_thread.start()
-    logger.info("Token watchdog started (interval=%ss)", 
-                _watchdog_thread.name)
+    from .config import DEFAULT_CONFIG
+    interval = DEFAULT_CONFIG.proactive_refresh_check_interval_seconds
+    logger.info("Token watchdog started (interval=%ss)", interval)
 
 
 def stop_watchdog() -> None:

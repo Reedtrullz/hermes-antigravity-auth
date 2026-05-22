@@ -1,1 +1,1 @@
-# Hermes Antigravity Auth - Python package
+"""Hermes Agent plugin for Google Antigravity OAuth model access."""

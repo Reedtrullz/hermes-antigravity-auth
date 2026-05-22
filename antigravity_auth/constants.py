@@ -1,3 +1,4 @@
+"""OAuth client credentials, endpoints, default headers, and platform detection."""
 import os
 import sys
 

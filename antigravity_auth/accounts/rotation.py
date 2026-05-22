@@ -1,3 +1,4 @@
+"""HealthScoreTracker: scores accounts by success rate for rotation decisions."""
 from __future__ import annotations
 
 import time

@@ -1,3 +1,4 @@
+"""Antigravity request envelope wrapping with header building and URL construction."""
 from __future__ import annotations
 
 import json

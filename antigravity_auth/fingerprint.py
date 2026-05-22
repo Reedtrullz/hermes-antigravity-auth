@@ -1,3 +1,4 @@
+"""Per-account device fingerprint generation for Antigravity header spoofing."""
 from __future__ import annotations
 
 import os

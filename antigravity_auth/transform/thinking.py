@@ -1,3 +1,4 @@
+"""Claude thinking block stripping, sanitization, and deep recursive filtering."""
 from __future__ import annotations
 
 

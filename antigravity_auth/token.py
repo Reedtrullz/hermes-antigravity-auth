@@ -1,3 +1,4 @@
+"""Access token refresh, expiry detection, and OAuth error parsing."""
 import gzip
 import json
 import time

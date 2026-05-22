@@ -1,3 +1,4 @@
+"""Color-coded CLI progress bars for account quota visualization."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

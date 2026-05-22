@@ -1,3 +1,4 @@
+"""Antigravity API endpoint fallback chain (daily → autopush → prod)."""
 from __future__ import annotations
 
 from typing import Any

@@ -1,3 +1,4 @@
+"""OpenAI-format messages → Gemini contents[].parts[] format conversion."""
 from __future__ import annotations
 
 import json

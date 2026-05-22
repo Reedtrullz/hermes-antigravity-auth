@@ -1,3 +1,4 @@
+"""Google Search tool via Antigravity API with URL context analysis."""
 from __future__ import annotations
 
 import json

@@ -1,3 +1,4 @@
+"""Dataclasses for ManagedAccount, RateLimitState, and rate limit constants."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

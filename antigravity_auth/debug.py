@@ -1,3 +1,4 @@
+"""Structured logging with file rotation and debug diagnostics."""
 from __future__ import annotations
 
 import json

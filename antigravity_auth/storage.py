@@ -1,3 +1,4 @@
+"""Persistent account and credential storage for Hermes Antigravity plugin."""
 import os
 import json
 import time

@@ -1,3 +1,4 @@
+"""Configuration dataclass with YAML loader and TTL cache."""
 from __future__ import annotations
 
 import os

@@ -1,3 +1,4 @@
+"""PKCE OAuth 2.0 authorization and token exchange for Google Antigravity."""
 import secrets
 import hashlib
 import base64

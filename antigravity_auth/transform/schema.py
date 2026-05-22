@@ -1,3 +1,4 @@
+"""JSON Schema sanitization for Antigravity API compatibility (const, $ref removal)."""
 from __future__ import annotations
 
 # ============================================================================

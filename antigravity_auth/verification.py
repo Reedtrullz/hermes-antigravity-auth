@@ -1,3 +1,4 @@
+"""Account health probing and Google verification-required detection."""
 from __future__ import annotations
 
 import json

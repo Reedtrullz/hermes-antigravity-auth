@@ -1,3 +1,4 @@
+"""SSE streaming response parsing, usage extraction, and error rewriting."""
 from __future__ import annotations
 
 import json

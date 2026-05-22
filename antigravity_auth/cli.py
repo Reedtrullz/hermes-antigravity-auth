@@ -1,3 +1,4 @@
+"""CLI subcommands for OAuth login, account management, and quota checks."""
 import http.server
 import socketserver
 import webbrowser

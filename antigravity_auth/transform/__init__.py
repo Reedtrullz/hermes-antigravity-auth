@@ -1,3 +1,4 @@
+"""Request/response transformation pipeline for Antigravity API format conversion."""
 from .envelope import (
   HeaderStyle,
   build_antigravity_envelope,
