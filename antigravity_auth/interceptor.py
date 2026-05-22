@@ -79,6 +79,73 @@ def _inject_tool_call_ids(inner_request: dict) -> None:
           fr["id"] = queue.pop(0)
 
 
+def _apply_claude_transforms(inner_request: dict) -> None:
+  """Apply Claude-specific request transforms beyond tool_call IDs.
+
+  The TypeScript original (transform/claude.ts) applies several transforms
+  that are critical for Claude models to work through Antigravity:
+
+  1. **VALIDATED mode**: Sets ``toolConfig.functionCallingConfig.mode`` to
+     ``"VALIDATED"`` (Hermes sends ``"AUTO"``, which Claude's backend
+     routing rejects with validation errors).
+
+  2. **Thinking config snake_case**: Converts ``thinkingBudget`` →
+     ``thinking_budget`` and ``includeThoughts`` → ``include_thoughts``.
+     The Antigravity backend routes these to Anthropic's native API which
+     expects snake_case keys (camelCase keys are silently ignored).
+
+  3. **Placeholder for empty required**: Claude's VALIDATED mode requires
+     every tool parameter schema to have at least one property in its
+     ``required`` array. Hermes' ``sanitize_gemini_tool_parameters`` can
+     produce schemas with empty ``required`` (or no ``required`` at all).
+     Without the placeholder, Claude returns validation errors.
+
+  Mutates ``inner_request`` in-place.
+  """
+
+  # 1. Set VALIDATED mode for tool calling
+  tool_config = inner_request.get("toolConfig")
+  if isinstance(tool_config, dict):
+    fcc = tool_config.get("functionCallingConfig")
+    if isinstance(fcc, dict):
+      fcc["mode"] = "VALIDATED"
+    else:
+      tool_config["functionCallingConfig"] = {"mode": "VALIDATED"}
+
+  # 2. Convert thinking config keys to snake_case
+  gen_config = inner_request.get("generationConfig")
+  if isinstance(gen_config, dict):
+    tc = gen_config.get("thinkingConfig")
+    if isinstance(tc, dict):
+      if "thinkingBudget" in tc:
+        tc["thinking_budget"] = tc.pop("thinkingBudget")
+      if "includeThoughts" in tc:
+        tc["include_thoughts"] = tc.pop("includeThoughts")
+
+  # 3. Add placeholder required property for tools with empty/missing required
+  tools = inner_request.get("tools")
+  if isinstance(tools, list):
+    for tool_group in tools:
+      if not isinstance(tool_group, dict):
+        continue
+      for fd in tool_group.get("functionDeclarations", []):
+        if not isinstance(fd, dict):
+          continue
+        params = fd.get("parameters")
+        if not isinstance(params, dict):
+          continue
+        required = params.get("required")
+        if not isinstance(required, list) or len(required) == 0:
+          props = params.get("properties")
+          if isinstance(props, dict):
+            # Add a _placeholder boolean property to satisfy VALIDATED mode
+            props["_placeholder"] = {
+              "type": "boolean",
+              "description": "Placeholder. Always pass true.",
+            }
+            params["required"] = ["_placeholder"]
+
+
 def _antigravity_request_hook(request: httpx.Request) -> None:
     if "cloudcode-pa" not in str(request.url):
         return
@@ -241,6 +308,7 @@ def install() -> bool:
   def _patched_wrap_code_assist(*, project_id, model, inner_request, user_prompt_id=None):
     if isinstance(inner_request, dict) and isinstance(model, str) and model.startswith("claude"):
       _inject_tool_call_ids(inner_request)
+      _apply_claude_transforms(inner_request)
     return _ORIGINAL_WRAP_CODE_ASSIST(
       project_id=project_id, model=model,
       inner_request=inner_request, user_prompt_id=user_prompt_id,
