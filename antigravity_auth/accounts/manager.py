@@ -62,6 +62,7 @@ def _write_accounts_file(data: dict[str, Any]) -> bool:
     with open(temp_path, "w", encoding="utf-8") as f:
       json.dump(data, f, indent=2)
     os.replace(temp_path, path)
+    os.chmod(path, 0o600)
     return True
   except (IOError, OSError):
     try:

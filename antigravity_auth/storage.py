@@ -112,6 +112,7 @@ def save_accounts(storage_dict: dict[str, Any]) -> None:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(storage_dict, f, indent=2)
             os.replace(tmp_path, path)
+            os.chmod(path, 0o600)
         except Exception as e:
             if tmp_path.exists():
                 try:
@@ -180,6 +181,7 @@ def sync_token_to_auth_json(
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
             os.replace(tmp_path, path)
+            os.chmod(path, 0o600)
         except Exception as e:
             if tmp_path.exists():
                 try:
