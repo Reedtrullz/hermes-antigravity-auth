@@ -282,7 +282,7 @@ class AccountManager:
     available = [
       a for a in self._accounts
       if a.enabled is not False
-      and not is_rate_limited_for_header_style(a.rate_limit_reset_times, family, header_style, model)
+      and not is_rate_limited_for_family(a.rate_limit_reset_times, family, model)
       and not self._is_over_soft_quota(a, family, soft_quota_threshold_percent,
                                         soft_quota_cache_ttl_ms, model)
       and not is_account_cooling_down(a)
