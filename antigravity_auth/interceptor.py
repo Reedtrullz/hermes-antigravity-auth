@@ -256,7 +256,9 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                 mark_rate_limited(active, float(retry * 1000), "gemini", "gemini-cli")
                 mgr.save_to_disk()
                 next_acc = mgr.get_current_or_next_for_family("gemini", strategy="hybrid")
-                if next_acc and next_acc.index != active.index:
+                if next_acc is None:
+                    logger.warning("All gemini accounts exhausted — cannot rotate after rate limit")
+                elif next_acc.index != active.index:
                     from .token import refresh_access_token
                     from .cli import sync_token_to_google_oauth
                     r = refresh_access_token({"refresh": next_acc.refresh_parts.refresh_token})

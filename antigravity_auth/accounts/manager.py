@@ -290,6 +290,14 @@ class AccountManager:
     ]
 
     if not available:
+      import logging
+      _logger = logging.getLogger(__name__)
+      _logger.warning("All %d accounts are currently rate-limited or cooling down for family=%s",
+                      len(self._accounts), family)
+      # Clear expired limits as a recovery attempt — they may have just expired
+      for a in self._accounts:
+        if a.enabled is not False:
+          clear_expired_rate_limits(a.rate_limit_reset_times)
       return None
 
     with self._lock:
