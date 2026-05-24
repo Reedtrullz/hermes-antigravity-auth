@@ -226,7 +226,9 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                 active.cooldown_reason = "auth-failure"
                 mgr.save_to_disk()
                 next_acc = mgr.get_current_or_next_for_family("gemini", strategy="hybrid")
-                if next_acc and next_acc.index != active.index:
+                if next_acc is None:
+                    logger.warning("All gemini accounts exhausted — cannot rotate after 403")
+                elif next_acc.index != active.index:
                     from .token import refresh_access_token
                     from .cli import sync_token_to_google_oauth
                     r = refresh_access_token({"refresh": next_acc.refresh_parts.refresh_token})
