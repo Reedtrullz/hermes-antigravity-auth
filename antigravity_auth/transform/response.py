@@ -364,6 +364,11 @@ def _handle_error_response(
     "without" in msg_lower or "immediately after" in msg_lower
   ):
     extra_headers["x-antigravity-context-error"] = "tool_pairing"
+    return (
+      json.dumps(error_body),
+      extra_headers or None,
+      {"recoveryType": "tool_result_missing"},
+    )
 
   retry_info = extract_retry_info(parsed)
   if retry_info is not None:

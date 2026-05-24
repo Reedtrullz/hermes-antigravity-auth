@@ -551,3 +551,20 @@ class TestTransformAntigravityResponse(unittest.TestCase):
         )
         self.assertEqual(body, "")
         self.assertIsNone(error)
+
+    def test_tool_result_missing_recovery(self):
+        """tool_result_missing errors return recoveryType in error dict."""
+        error_body = json.dumps({
+            "error": {
+                "code": 400,
+                "message": "messages.3.content.tool_use without immediately after tool_result"
+            }
+        })
+        body, extra_headers, error = transform_antigravity_response(
+            error_body, streaming=False, status_code=400,
+            headers={"content-type": "application/json"},
+        )
+        self.assertIsNotNone(error)
+        self.assertEqual(error.get("recoveryType"), "tool_result_missing")
+        self.assertIsNotNone(extra_headers)
+        self.assertEqual(extra_headers.get("x-antigravity-context-error"), "tool_pairing")
