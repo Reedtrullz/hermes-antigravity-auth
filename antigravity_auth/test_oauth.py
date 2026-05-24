@@ -11,6 +11,8 @@ try:
         authorize_antigravity,
         fetch_project_id,
         exchange_antigravity,
+        get_pkce_verifier,
+        _pkce_verifier_store,
         _decompress,
         make_post_request,
         make_get_request,
@@ -23,6 +25,8 @@ except ImportError:
         authorize_antigravity,
         fetch_project_id,
         exchange_antigravity,
+        get_pkce_verifier,
+        _pkce_verifier_store,
         _decompress,
         make_post_request,
         make_get_request,
@@ -30,6 +34,10 @@ except ImportError:
 
 
 class TestOAuth(unittest.TestCase):
+
+    def setUp(self):
+        # Clear the PKCE verifier store between tests to prevent cross-test pollution
+        _pkce_verifier_store.clear()
 
     def test_generate_pkce(self):
         pkce = generate_pkce()
@@ -60,9 +68,9 @@ class TestOAuth(unittest.TestCase):
 
     def test_decode_state_missing_verifier(self):
         state = encode_state({'projectId': 'test_project'})
-        with self.assertRaises(ValueError) as cm:
-            decode_state(state)
-        self.assertIn('Missing PKCE verifier in state', str(cm.exception))
+        decoded = decode_state(state)
+        self.assertEqual(decoded['projectId'], 'test_project')
+        self.assertNotIn('verifier', decoded)
 
     def test_authorize_antigravity(self):
         # Patch the credential loading at the constants level since
@@ -123,8 +131,10 @@ class TestOAuth(unittest.TestCase):
         mock_make_get.return_value = (200, b'{"email": "test@example.com"}')
         # Mock fetch_project_id to return a project ID
         with patch('antigravity_auth.oauth.fetch_project_id', return_value='test_project'):
-            # Create a valid state to pass decode_state
-            state = encode_state({"verifier": "test_verifier", "projectId": "test_project"})
+            # Populate the PKCE verifier store with a known state_id
+            state_id = "test_state_id"
+            _pkce_verifier_store[state_id] = {"verifier": "test_verifier", "projectId": "test_project"}
+            state = encode_state({"id": state_id})
             result = exchange_antigravity('fake_code', state)
             self.assertEqual(result['type'], 'success')
             self.assertEqual(result['access'], 'access_token')
@@ -133,6 +143,8 @@ class TestOAuth(unittest.TestCase):
             self.assertEqual(result['projectId'], 'test_project')
             self.assertEqual(result['project_id'], 'test_project')
             self.assertIn('expires', result)
+            # Verify the verifier was consumed
+            self.assertIsNone(get_pkce_verifier(state_id))
 
     @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_token_failure(self, mock_make_post):
@@ -143,8 +155,10 @@ class TestOAuth(unittest.TestCase):
 
     @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_missing_access_token(self, mock_make_post):
-        # Create a valid state to pass decode_state
-        state = encode_state({"verifier": "test_verifier", "projectId": "test_project"})
+        # Populate the PKCE verifier store
+        state_id = "test_state_id_missing_access"
+        _pkce_verifier_store[state_id] = {"verifier": "test_verifier", "projectId": "test_project"}
+        state = encode_state({"id": state_id})
         mock_make_post.return_value = (200, b'{"refresh_token": "refresh_token"}')
         result = exchange_antigravity('fake_code', state)
         self.assertEqual(result['type'], 'failed')
@@ -152,8 +166,10 @@ class TestOAuth(unittest.TestCase):
 
     @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_missing_refresh_token(self, mock_make_post):
-        # Create a valid state to pass decode_state
-        state = encode_state({"verifier": "test_verifier", "projectId": "test_project"})
+        # Populate the PKCE verifier store
+        state_id = "test_state_id_missing_refresh"
+        _pkce_verifier_store[state_id] = {"verifier": "test_verifier", "projectId": "test_project"}
+        state = encode_state({"id": state_id})
         mock_make_post.return_value = (200, b'{"access_token": "access_token"}')
         result = exchange_antigravity('fake_code', state)
         self.assertEqual(result['type'], 'failed')

@@ -38,6 +38,10 @@ except ImportError:
 
 _log = createLogger(__name__)
 
+# In-memory PKCE verifier store: state_id -> {"verifier": str, "projectId": str}
+# Keys are random, never exposed to browser. Entries consumed on exchange.
+_pkce_verifier_store: dict[str, dict[str, str]] = {}
+
 def generate_pkce() -> dict:
     verifier = secrets.token_urlsafe(64)
     sha256 = hashlib.sha256(verifier.encode("utf-8")).digest()
@@ -56,12 +60,13 @@ def decode_state(state: str) -> dict:
     padded = normalized + "=" * ((4 - len(normalized) % 4) % 4)
     json_bytes = base64.b64decode(padded)
     parsed = json.loads(json_bytes.decode("utf-8", errors="ignore"))
-    if not isinstance(parsed, dict) or "verifier" not in parsed:
-        raise ValueError("Missing PKCE verifier in state")
-    return {
-        "verifier": parsed["verifier"],
-        "projectId": parsed.get("projectId") or parsed.get("project_id") or ""
-    }
+    if not isinstance(parsed, dict):
+        raise ValueError("Invalid state format")
+    return parsed
+
+def get_pkce_verifier(state_id: str) -> dict[str, str] | None:
+    """Retrieve and consume the PKCE verifier for a state ID."""
+    return _pkce_verifier_store.pop(state_id, None)
 
 def _ensure_credentials():
     if not ANTIGRAVITY_CLIENT_ID or not ANTIGRAVITY_CLIENT_SECRET:
@@ -76,6 +81,12 @@ def authorize_antigravity(project_id: str = "") -> dict:
     cid, csec = require_credentials()
     pkce = generate_pkce()
     
+    state_id = secrets.token_urlsafe(32)
+    _pkce_verifier_store[state_id] = {
+        "verifier": pkce["verifier"],
+        "projectId": project_id or "",
+    }
+    
     params = {
         "client_id": cid,
         "response_type": "code",
@@ -83,7 +94,7 @@ def authorize_antigravity(project_id: str = "") -> dict:
         "scope": " ".join(ANTIGRAVITY_SCOPES),
         "code_challenge": pkce["challenge"],
         "code_challenge_method": "S256",
-        "state": encode_state({"verifier": pkce["verifier"], "projectId": project_id or ""}),
+        "state": encode_state({"id": state_id}),
         "access_type": "offline",
         "prompt": "consent",
     }
@@ -187,8 +198,10 @@ def calculate_token_expiry(request_time_ms: int, expires_in_seconds) -> int:
 def exchange_antigravity(code: str, state: str) -> dict:
     try:
         state_data = decode_state(state)
-        verifier = state_data["verifier"]
-        project_id = state_data["projectId"]
+        state_id = state_data.get("id", "")
+        pkce_data = get_pkce_verifier(state_id) if state_id else None
+        verifier = pkce_data.get("verifier", "") if pkce_data else ""
+        project_id = pkce_data.get("projectId", "") if pkce_data else ""
         
         start_time = int(time.time() * 1000)
         
