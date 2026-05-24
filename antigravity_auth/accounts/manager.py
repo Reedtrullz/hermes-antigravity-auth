@@ -362,13 +362,16 @@ class AccountManager:
     retry_after_ms: float | None = None,
     failure_ttl_ms: float = 3600_000,
   ) -> int:
-    return mark_rate_limited_with_reason(
+    result = mark_rate_limited_with_reason(
       account, family, header_style, model, reason, retry_after_ms, failure_ttl_ms,
     )
+    self._health_tracker.record_rate_limit(account.index)
+    return result
 
   def mark_request_success(self, account: ManagedAccount) -> None:
     if account.consecutive_failures:
       account.consecutive_failures = 0
+      self._health_tracker.record_success(account.index)
 
   def has_other_account_with_antigravity_available(
     self,
