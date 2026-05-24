@@ -301,6 +301,10 @@ def install() -> bool:
   except ImportError:
     return False
   _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
+  # Guard: if already patched by another plugin, don't chain
+  if getattr(_ORIGINAL_INIT, '__name__', '') == '_patched_init':
+    logger.warning("Interceptor already patched — skipping install")
+    return False
   _ORIGINAL_WRAP_CODE_ASSIST = wrap_code_assist_request
 
   def _patched_init(self, *args: Any, **kwargs: Any) -> None:
@@ -326,3 +330,27 @@ def install() -> bool:
 
 def is_installed() -> bool:
     return _PATCHED
+
+
+def uninstall() -> bool:
+  """Restore original GeminiCloudCodeClient.__init__ and wrap_code_assist_request.
+
+  Returns True if successfully uninstalled, False if not installed."""
+  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST
+  if not _PATCHED:
+    return False
+  try:
+    from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+    import agent.gemini_cloudcode_adapter as gca
+    if _ORIGINAL_INIT is not None:
+      GeminiCloudCodeClient.__init__ = _ORIGINAL_INIT
+    if _ORIGINAL_WRAP_CODE_ASSIST is not None:
+      gca.wrap_code_assist_request = _ORIGINAL_WRAP_CODE_ASSIST
+    _PATCHED = False
+    _ORIGINAL_INIT = None
+    _ORIGINAL_WRAP_CODE_ASSIST = None
+    logger.info("Antigravity interceptor uninstalled")
+    return True
+  except Exception as e:
+    logger.warning("Failed to uninstall interceptor: %s", e)
+    return False
