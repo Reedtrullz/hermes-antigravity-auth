@@ -77,6 +77,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 }
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -95,6 +96,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 }
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -115,6 +117,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 }
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -133,6 +136,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 }
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -162,6 +166,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 },
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -186,6 +191,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 },
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -208,6 +214,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 },
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -229,6 +236,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 }
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -247,6 +255,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 }
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
@@ -274,6 +283,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
                 },
             ],
             "activeIndex": 0,
+            "cursor": 0,
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)

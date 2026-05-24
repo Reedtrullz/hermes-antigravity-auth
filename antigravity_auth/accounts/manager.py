@@ -124,10 +124,14 @@ class AccountManager:
       loaded.append(account)
 
     self._accounts = loaded
-    self._cursor = _clamp_non_negative_int(stored.get("activeIndex", 0), 0)
+    if "cursor" in stored:
+      self._cursor = _clamp_non_negative_int(stored.get("cursor", 0), 0)
+    else:
+      self._cursor = _clamp_non_negative_int(stored.get("activeIndex", 0), 0)
     if self._accounts:
-      self._cursor = self._cursor % len(self._accounts)
-      default_index = self._cursor
+      if "cursor" not in stored:
+        self._cursor = self._cursor % len(self._accounts)
+      default_index = self._cursor % len(self._accounts) if self._accounts else 0
 
       family_map = stored.get("activeIndexByFamily", {})
       if isinstance(family_map, dict):
@@ -461,7 +465,8 @@ class AccountManager:
     storage_dict = {
       "version": 4,
       "accounts": accounts_data,
-      "activeIndex": self._cursor,
+      "activeIndex": claude_index,
+      "cursor": self._cursor,
       "activeIndexByFamily": {
         "claude": claude_index,
         "gemini": gemini_index,
