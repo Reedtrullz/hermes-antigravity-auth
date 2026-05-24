@@ -1,7 +1,7 @@
 """AccountManager: in-memory multi-account selection with sticky rotation."""
 from __future__ import annotations
 
-import json
+
 import os
 import threading
 import time
@@ -41,37 +41,6 @@ def _clamp_non_negative_int(value: Any, fallback: int) -> int:
   return max(0, int(value))
 
 
-def _read_accounts_file() -> dict[str, Any] | None:
-  """Read accounts storage from the antigravity-accounts.json file."""
-  path = get_accounts_json_path()
-  if not path.exists():
-    return None
-  try:
-    with open(path, "r", encoding="utf-8") as f:
-      return json.load(f)
-  except (json.JSONDecodeError, IOError):
-    return None
-
-
-def _write_accounts_file(data: dict[str, Any]) -> bool:
-  """Atomically write accounts storage to disk."""
-  path = get_accounts_json_path()
-  temp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-  try:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(temp_path, "w", encoding="utf-8") as f:
-      json.dump(data, f, indent=2)
-    os.replace(temp_path, path)
-    os.chmod(path, 0o600)
-    return True
-  except (IOError, OSError):
-    try:
-      if temp_path.exists():
-        temp_path.unlink()
-    except OSError:
-      pass
-    return False
-
 
 class AccountManager:
   """In-memory multi-account manager with sticky account selection.
@@ -104,8 +73,9 @@ class AccountManager:
   def load_from_disk(cls) -> AccountManager:
     """Load accounts from the accounts storage file."""
     manager = cls()
-    stored = _read_accounts_file()
-    if stored is None:
+    from ..storage import load_accounts
+    stored = load_accounts()
+    if not stored or not stored.get("accounts"):
       return manager
     manager._load_from_stored(stored)
     return manager
@@ -488,7 +458,7 @@ class AccountManager:
 
       accounts_data.append(acc_dict)
 
-    storage = {
+    storage_dict = {
       "version": 4,
       "accounts": accounts_data,
       "activeIndex": self._cursor,
@@ -497,7 +467,12 @@ class AccountManager:
         "gemini": gemini_index,
       },
     }
-    return _write_accounts_file(storage)
+    from ..storage import save_accounts
+    try:
+      save_accounts(storage_dict)
+      return True
+    except Exception:
+      return False
 
   def _request_save_to_disk(self) -> None:
     with self._lock:

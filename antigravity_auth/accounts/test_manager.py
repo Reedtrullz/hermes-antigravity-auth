@@ -56,7 +56,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
     def _make_manager(self, accounts_data: dict) -> AccountManager:
         self._write_accounts(accounts_data)
         with mock.patch(
-            "antigravity_auth.accounts.manager.get_accounts_json_path",
+            "antigravity_auth.storage.get_accounts_json_path",
             return_value=self.accounts_path,
         ):
             return AccountManager.load_from_disk()
