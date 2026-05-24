@@ -1,6 +1,7 @@
 """Persistent account and credential storage for Hermes Antigravity plugin."""
 import os
 import json
+import secrets
 import time
 import threading
 from pathlib import Path
@@ -105,8 +106,8 @@ def save_accounts(storage_dict: dict[str, Any]) -> None:
     path = get_accounts_json_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     
-    tmp_path = path.with_suffix(f".json.{os.getpid()}.tmp")
-    
+    tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+
     with _accounts_store_lock:
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
@@ -142,8 +143,8 @@ def sync_token_to_auth_json(
     path.parent.mkdir(parents=True, exist_ok=True)
     
     current_epoch_ms = int(time.time() * 1000)
-    tmp_path = path.with_suffix(f".json.{os.getpid()}.tmp")
-    
+    tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+
     with _auth_store_lock:
         data = {
             "providers": {},

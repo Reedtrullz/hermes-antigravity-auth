@@ -75,6 +75,12 @@ def _check_version() -> None:
     if _is_cache_fresh():
         return
 
+    if os.environ.get("HERMES_ANTIGRAVITY_VERSION_CHECK", "1") != "1":
+        # Opt-in flag disabled — skip the version check
+        import logging
+        logging.getLogger(__name__).info("Version check disabled via HERMES_ANTIGRAVITY_VERSION_CHECK")
+        return
+
     installed = _get_installed_version()
 
     try:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 from datetime import datetime, timezone
@@ -179,6 +180,14 @@ def _mask_headers(headers: dict) -> dict:
   return result
 
 
+def _sanitize_body(body: str) -> str:
+  """Redact access_token/refresh_token/id_token values from debug log bodies."""
+  body = re.sub(r'"access_token"\s*:\s*"[^"]+"', '"access_token":"[REDACTED]"', body)
+  body = re.sub(r'"refresh_token"\s*:\s*"[^"]+"', '"refresh_token":"[REDACTED]"', body)
+  body = re.sub(r'"id_token"\s*:\s*"[^"]+"', '"id_token":"[REDACTED]"', body)
+  return body
+
+
 def truncate_text(text: str, max_chars: int = 12000) -> str:
   if len(text) <= max_chars:
     return text
@@ -243,7 +252,7 @@ def start_antigravity_debug_request(meta: dict) -> str | None:
   _log_debug(f"[Antigravity Debug {request_id}] Headers: {json.dumps(_mask_headers(headers or {}))}")
 
   body = meta.get("body")
-  body_preview = format_body_preview(body)
+  body_preview = format_body_preview(_sanitize_body(body) if body else None)
   if body_preview:
     _log_debug(f"[Antigravity Debug {request_id}] Body Preview: {body_preview}")
 
@@ -281,7 +290,7 @@ def log_antigravity_debug_response(
   if body:
     _log_debug(
       f"[Antigravity Debug {context_id}] Response Body Preview: "
-      f"{truncate_text(body, MAX_BODY_PREVIEW_CHARS)}"
+      f"{truncate_text(_sanitize_body(body) if isinstance(body, str) else str(body), MAX_BODY_PREVIEW_CHARS)}"
     )
 
 

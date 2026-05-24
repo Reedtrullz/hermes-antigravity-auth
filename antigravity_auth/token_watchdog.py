@@ -82,7 +82,7 @@ def _refresh_if_needed(config) -> None:
                     email=acc.get("email"),
                     expires_ms=refreshed.get("expires"),
                 )
-                logger.info("Proactively refreshed token for %s", acc.get("email"))
+                logger.debug("Proactively refreshed token for %s", acc.get("email", "unknown"))
     except Exception as exc:
         logger.debug("Proactive token refresh failed: %s", exc)
 

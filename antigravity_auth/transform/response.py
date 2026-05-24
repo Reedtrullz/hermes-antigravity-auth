@@ -173,26 +173,47 @@ def _needs_preview_access_override(status_code: int, body: dict[str, Any], reque
   return False
 
 
-def _extract_usage_from_sse_payload(payload: str) -> dict[str, int] | None:
-  for line in payload.split("\n"):
-    stripped = line.strip()
-    if not stripped.startswith("data:"):
-      continue
-    json_text = stripped[5:].strip()
-    if not json_text:
-      continue
-    try:
-      parsed = json.loads(json_text)
-    except json.JSONDecodeError:
-      continue
-    if not isinstance(parsed, dict):
-      continue
-    response_data = parsed.get("response")
-    if not isinstance(response_data, dict):
-      continue
+def _extract_parsed_usage(parsed: dict[str, Any]) -> dict[str, int] | None:
+  """Extract usage metadata from a parsed JSON object.
+
+  Looks for usageMetadata at the top level or under response.usageMetadata.
+  """
+  response_data = parsed.get("response")
+  if isinstance(response_data, dict):
     usage = response_data.get("usageMetadata") or response_data.get("usage_metadata")
     if isinstance(usage, dict):
       return _extract_usage_values(usage)
+
+  usage = parsed.get("usageMetadata") or parsed.get("usage_metadata")
+  if isinstance(usage, dict):
+    return _extract_usage_values(usage)
+  return None
+
+
+def _extract_usage_from_sse_payload(body: str) -> dict[str, Any] | None:
+  """Extract usage metadata from an SSE stream payload.
+
+  Handles multi-line SSE data blocks by accumulating ``data:`` lines
+  until a blank line is encountered, then joining and parsing.
+  """
+  if not isinstance(body, str):
+    return None
+  lines = body.split("\n")
+  current_data: list[str] = []
+  for line in lines:
+    if line.startswith("data: "):
+      current_data.append(line[6:])
+    elif line == "" and current_data:
+      data_str = "".join(current_data)
+      try:
+        parsed = json.loads(data_str)
+      except json.JSONDecodeError:
+        current_data = []
+        continue
+      usage = _extract_parsed_usage(parsed)
+      if usage:
+        return usage
+      current_data = []
   return None
 
 

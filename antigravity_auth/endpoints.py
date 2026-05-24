@@ -1,9 +1,12 @@
 """Antigravity API endpoint fallback chain (daily → autopush → prod)."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .constants import ANTIGRAVITY_ENDPOINT_FALLBACKS, ANTIGRAVITY_ENDPOINT_PROD
+
+_FAILURE_TTL_SECONDS = 300
 
 
 class EndpointProvider:
@@ -16,7 +19,7 @@ class EndpointProvider:
   """
 
   def __init__(self) -> None:
-    self._failed_endpoints: set[str] = set()
+    self._failed_endpoints: dict[str, float] = {}
 
   def get_endpoints(self, header_style: str = "antigravity") -> list[str]:
     """Return the list of endpoints to try, in fallback order.
@@ -30,11 +33,17 @@ class EndpointProvider:
 
   def mark_failed(self, endpoint: str) -> None:
     """Mark an endpoint as failed so it is skipped in future attempts."""
-    self._failed_endpoints.add(endpoint)
+    self._failed_endpoints[endpoint] = time.time()
 
   def is_failed(self, endpoint: str) -> bool:
-    """Check whether an endpoint has been marked as failed."""
-    return endpoint in self._failed_endpoints
+    """Check whether an endpoint has been marked as failed (with TTL expiry)."""
+    failure_time = self._failed_endpoints.get(endpoint)
+    if failure_time is None:
+      return False
+    if time.time() - failure_time > _FAILURE_TTL_SECONDS:
+      self._failed_endpoints.pop(endpoint, None)
+      return False
+    return True
 
   def reset(self) -> None:
     """Clear all endpoint failure marks."""
@@ -42,8 +51,12 @@ class EndpointProvider:
 
   @property
   def failed_endpoints(self) -> set[str]:
-    return self._failed_endpoints.copy()
-
+    """Return currently failed endpoints (expired entries are cleaned)."""
+    now = time.time()
+    expired = [ep for ep, ts in self._failed_endpoints.items() if now - ts > _FAILURE_TTL_SECONDS]
+    for ep in expired:
+      self._failed_endpoints.pop(ep, None)
+    return set(self._failed_endpoints.keys())
 
 
 
