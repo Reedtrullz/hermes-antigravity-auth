@@ -22,6 +22,13 @@ def register(ctx):
   except Exception:
     pass  # non-fatal — plugin still works for CLI commands
 
+  # Initialize shared AccountManager so interceptor hooks share state
+  try:
+    from .accounts.shared import get_or_create_global_manager
+    get_or_create_global_manager()
+  except Exception:
+    pass
+
   # Register pre_api_request hook for session recovery
   try:
     import logging

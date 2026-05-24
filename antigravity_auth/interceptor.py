@@ -217,8 +217,8 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
 
     if response.status_code == 403:
         try:
-            from .accounts.manager import AccountManager
-            mgr = AccountManager.load_from_disk()
+            from .accounts.manager import get_or_create_global_manager
+            mgr = get_or_create_global_manager()
             active = mgr.get_current_account_for_family("gemini")
             if active:
                 import time
@@ -242,9 +242,9 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
 
     if response.status_code == 429 and config.switch_on_first_rate_limit:
         try:
-            from .accounts.manager import AccountManager
+            from .accounts.manager import get_or_create_global_manager
             from .accounts.ratelimit import mark_rate_limited
-            mgr = AccountManager.load_from_disk()
+            mgr = get_or_create_global_manager()
             active = mgr.get_current_account_for_family("gemini")
             if active:
                 retry = config.default_retry_after_seconds

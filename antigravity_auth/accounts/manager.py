@@ -579,3 +579,7 @@ class AccountManager:
 
   def _mark_touched_for_quota(self, account: ManagedAccount, quota_key: str) -> None:
     account.touched_for_quota[quota_key] = now_ms()
+
+
+# Re-export for convenience
+from .shared import get_global_manager, set_global_manager, get_or_create_global_manager
