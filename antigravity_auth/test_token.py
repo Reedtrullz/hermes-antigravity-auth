@@ -92,6 +92,32 @@ class TestToken(unittest.TestCase):
         self.assertFalse(is_access_token_expired(auth_valid))
 
     @patch("urllib.request.urlopen")
+    def test_refresh_access_token_does_not_set_active_provider_by_default(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({
+            "access_token": "new_access",
+            "expires_in": 3600,
+            "refresh_token": "new_refresh",
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        sync_token_to_auth_json("old_access", "old_refresh|proj", "proj", "old@example.com")
+
+        updated = refresh_access_token({
+            "refresh": "old_refresh|proj",
+            "access": "old_access",
+            "expires": 0,
+            "email": "user@example.com",
+        })
+
+        self.assertEqual(updated["access"], "new_access")
+        self.assertEqual(updated["refresh"], "new_refresh|proj")
+        active = get_active_token_from_auth_json()
+        self.assertEqual(active["access_token"], "old_access")
+        self.assertEqual(active["refresh_token"], "old_refresh|proj")
+
+    @patch("urllib.request.urlopen")
     def test_refresh_access_token_success(self, mock_urlopen):
         mock_response = MagicMock()
         mock_response.status = 200
@@ -121,7 +147,7 @@ class TestToken(unittest.TestCase):
             "email": "test@example.com",
         }
 
-        updated_auth = refresh_access_token(auth)
+        updated_auth = refresh_access_token(auth, persist=True, set_active=True)
         self.assertEqual(updated_auth["access"], "new_access_token_abc")
         self.assertEqual(updated_auth["refresh"], "new_rotated_refresh_token_xyz|proj_abc")
         self.assertTrue(updated_auth["expires"] > int(time.time() * 1000))
@@ -175,7 +201,7 @@ class TestToken(unittest.TestCase):
         }
 
         with self.assertRaises(AntigravityTokenRefreshError) as context:
-            refresh_access_token(auth)
+            refresh_access_token(auth, persist=True, set_active=True)
 
         self.assertEqual(context.exception.code, "invalid_grant")
         self.assertEqual(context.exception.status, 400)
@@ -223,7 +249,7 @@ class TestToken(unittest.TestCase):
             "email": "test@example.com",
         }
 
-        updated_auth = refresh_access_token(auth)
+        updated_auth = refresh_access_token(auth, persist=True, set_active=True)
         self.assertEqual(updated_auth["access"], "gzipped_access_token")
         self.assertEqual(updated_auth["refresh"], "gzipped_refresh_token|proj_abc")
         self.assertTrue(updated_auth["expires"] > int(time.time() * 1000))

@@ -100,7 +100,7 @@ def parse_oauth_error_payload(text: str | None) -> dict[str, str | None]:
         return {"description": text}
 
 
-def refresh_access_token(auth: dict) -> dict:
+def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool = False) -> dict:
     old_refresh = auth.get("refresh", "")
     parts = parse_refresh_parts(old_refresh)
     if not parts.get("refreshToken"):
@@ -158,11 +158,12 @@ def refresh_access_token(auth: dict) -> dict:
         message = f"{base_message} - {details_str}" if details_str else base_message
         
         if code == "invalid_grant":
-            try:
-                sync_token_to_auth_json("", "", project_id="", set_active=False)
-            except Exception:
-                pass
-                
+            if persist:
+                try:
+                    sync_token_to_auth_json("", "", project_id="", set_active=False)
+                except Exception:
+                    pass
+
             try:
                 accounts_data = load_accounts()
                 original_len = len(accounts_data.get("accounts", []))
@@ -220,16 +221,17 @@ def refresh_access_token(auth: dict) -> dict:
     project_id = parts.get("projectId") or ""
     email = auth.get("email")
     
-    try:
-        sync_token_to_auth_json(
-            access_token=access_token,
-            refresh_token=new_refresh_packed,
-            project_id=project_id,
-            email=email,
-            set_active=True
-        )
-    except Exception:
-        pass
+    if persist:
+        try:
+            sync_token_to_auth_json(
+                access_token=access_token,
+                refresh_token=new_refresh_packed,
+                project_id=project_id,
+                email=email,
+                set_active=set_active,
+            )
+        except Exception:
+            pass
         
     try:
         accounts_data = load_accounts()
