@@ -21,6 +21,20 @@ _ORIGINAL_INIT = None
 _ORIGINAL_WRAP_CODE_ASSIST = None
 
 
+def _model_family_for_model(model: str) -> str:
+  lower = (model or "").lower()
+  if "claude" in lower:
+    return "claude"
+  return "gemini"
+
+
+def _select_header_style_for_model(model: str, cli_first: bool) -> str:
+  lower = (model or "").lower()
+  if cli_first and "gemini" in lower and "claude" not in lower:
+    return "gemini-cli"
+  return "antigravity"
+
+
 def _inject_tool_call_ids(inner_request: dict) -> None:
   """Inject auto-generated IDs into functionCall/functionResponse for Claude.
 
@@ -161,7 +175,7 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         return
     
     model = str(body.get("model", ""))
-    header_style = "gemini-cli" if config.cli_first else "antigravity"
+    header_style = _select_header_style_for_model(model, config.cli_first)
 
     if header_style == "gemini-cli":
         logger.warning(

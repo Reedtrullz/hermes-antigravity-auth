@@ -9,6 +9,33 @@ from unittest.mock import patch
 import httpx
 
 
+class TestModelHeaderHelpers(unittest.TestCase):
+
+    def test_claude_uses_antigravity_headers_even_when_cli_first_enabled(self):
+        from antigravity_auth.interceptor import _select_header_style_for_model
+        self.assertEqual(
+            _select_header_style_for_model("claude-sonnet-4-6-thinking", cli_first=True),
+            "antigravity",
+        )
+
+    def test_gemini_uses_gemini_cli_headers_only_when_cli_first_enabled(self):
+        from antigravity_auth.interceptor import _select_header_style_for_model
+        self.assertEqual(
+            _select_header_style_for_model("gemini-3.1-pro-high", cli_first=True),
+            "gemini-cli",
+        )
+        self.assertEqual(
+            _select_header_style_for_model("gemini-3.1-pro-high", cli_first=False),
+            "antigravity",
+        )
+
+    def test_model_family_for_claude_and_gemini(self):
+        from antigravity_auth.interceptor import _model_family_for_model
+        self.assertEqual(_model_family_for_model("claude-sonnet-4-6"), "claude")
+        self.assertEqual(_model_family_for_model("gemini-3.1-pro-high"), "gemini")
+        self.assertEqual(_model_family_for_model("gpt-oss-120b-medium"), "gemini")
+
+
 class TestRequestHook(unittest.TestCase):
 
     def setUp(self):
@@ -48,6 +75,16 @@ class TestRequestHook(unittest.TestCase):
         r = self._make_request()
         self.hook(r)
         self.assertIn("application/json", r.headers.get("content-type", ""))
+
+    def test_claude_request_uses_antigravity_headers_when_cli_first_enabled(self):
+        r = self._make_request(model="claude-sonnet-4-6-thinking")
+        config = type("Config", (), {"cli_first": True})()
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.interceptor.build_antigravity_headers",
+            return_value={"User-Agent": "antigravity-test"},
+        ) as build_headers:
+            self.hook(r)
+        build_headers.assert_called_once_with(header_style="antigravity")
 
     def test_passthrough_non_cloudcode(self):
         r = httpx.Request("GET", "https://example.com/api")
