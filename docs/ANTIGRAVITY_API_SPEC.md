@@ -1,8 +1,8 @@
 # Antigravity Unified Gateway API Specification
 
-**Version:** 1.0
-**Last Updated:** December 13, 2025
-**Status:** Verified by Direct API Testing
+**Version:** 1.1
+**Last Updated:** May 2026
+**Status:** Implementation-aligned model inventory; verify availability against the live Antigravity surface before treating a model as generally available.
 
 ---
 
@@ -78,11 +78,21 @@ Accept: text/event-stream
 
 | Model Name | Model ID | Type | Status |
 |------------|----------|------|--------|
-| Claude Sonnet 4.6 | `claude-sonnet-4-6` | Anthropic | ✅ Verified |
-| Claude Opus 4.6 Thinking | `claude-opus-4-6-thinking` | Anthropic | ✅ Verified |
-| Gemini 3 Pro High | `gemini-3-pro-high` | Google | ✅ Verified |
-| Gemini 3 Pro Low | `gemini-3-pro-low` | Google | ✅ Verified |
-| GPT-OSS 120B Medium | `gpt-oss-120b-medium` | Other | ✅ Verified |
+| Claude Sonnet 4.6 | `claude-sonnet-4-6` | Anthropic | Registered |
+| Claude Sonnet 4.6 Thinking | `claude-sonnet-4-6-thinking` | Anthropic | Registered |
+| Claude Opus 4.6 Thinking | `claude-opus-4-6-thinking` | Anthropic | Registered |
+| Gemini 3.5 Flash High | `gemini-3.5-flash-high` | Google | Registered |
+| Gemini 3.5 Flash Medium | `gemini-3.5-flash-medium` | Google | Registered |
+| Gemini 3.1 Pro High | `gemini-3.1-pro-high` | Google | Registered |
+| Gemini 3.1 Pro Low | `gemini-3.1-pro-low` | Google | Registered |
+| Gemini 3.0 Pro Preview | `gemini-3-pro-preview` | Google | Legacy registered |
+| Gemini 3.0 Flash Preview | `gemini-3-flash-preview` | Google | Legacy registered |
+| Gemini 2.5 Pro | `gemini-2.5-pro` | Google | Legacy registered |
+| Gemini 2.5 Flash | `gemini-2.5-flash` | Google | Legacy registered |
+| GPT-OSS 120B Medium | `gpt-oss-120b-medium` | Other | Registered |
+
+Antigravity 2.0 Gemini 3.1 and 3.5 IDs use the bare names above; do not append
+`-preview` to those families. Gemini 3.0 legacy IDs still include `-preview`.
 
 ---
 
@@ -209,11 +219,11 @@ Accept: text/event-stream
 
 ### Google Search Grounding
 
-Gemini models support Google Search grounding, but **it cannot be combined with function declarations** in the same request. This plugin implements a dedicated `google_search` tool that makes separate API calls.
+Gemini models support Google Search grounding, but **it cannot be combined with function declarations** in the same request. This plugin implements a dedicated `google_antigravity_search` Hermes tool that makes separate API calls.
 
-#### How the `google_search` Tool Works
+#### How the `google_antigravity_search` Tool Works
 
-The model can call `google_search(query, urls?, thinking?)` which:
+The model can call `google_antigravity_search(query, urls?)` which:
 1. Makes a **separate API call** to Antigravity with only `{ googleSearch: {} }` (no function declarations)
 2. Parses the `groundingMetadata` from the response
 3. Returns formatted markdown with sources and citations
@@ -223,7 +233,6 @@ The model can call `google_search(query, urls?, thinking?)` which:
 |-----------|------|----------|-------------|
 | `query` | string | ✅ | The search query or question |
 | `urls` | string[] | ❌ | URLs to analyze (adds `urlContext` tool) |
-| `thinking` | boolean | ❌ | Enable deep thinking (default: true) |
 
 **Example Response:**
 ```markdown
@@ -281,7 +290,6 @@ The underlying API uses these tool formats:
 ```
 
 > **Important:** `googleSearch` and `urlContext` tools **cannot be combined with `functionDeclarations`** in the same request. This is why the plugin uses a separate API call.
-```
 
 ### Function Name Rules
 
