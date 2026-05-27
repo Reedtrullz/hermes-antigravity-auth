@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -93,6 +94,26 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(active_updated["access_token"], "acc_updated")
         self.assertEqual(active_updated["refresh_token"], "ref_updated")
         self.assertEqual(active_updated["project_id"], "proj_updated")
+
+    def test_sync_token_to_auth_json_sets_canonical_runtime_active_provider(self):
+        sync_token_to_auth_json(
+            access_token="acc_111",
+            refresh_token="ref_222|proj_333",
+            project_id="proj_333",
+            email="user@example.com",
+            set_active=True,
+        )
+
+        with open(get_auth_json_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.assertEqual(data["active_provider"], "google-gemini-cli")
+        self.assertIn("antigravity", data["providers"])
+        self.assertIn("google-gemini-cli", data["providers"])
+        self.assertEqual(
+            data["providers"]["google-gemini-cli"],
+            data["providers"]["antigravity"],
+        )
 
 
 if __name__ == "__main__":

@@ -176,7 +176,7 @@ def sync_token_to_auth_json(
         data["providers"]["google-gemini-cli"] = data["providers"]["antigravity"]
         
         if set_active:
-            data["active_provider"] = "antigravity"
+            data["active_provider"] = "google-gemini-cli"
             
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
