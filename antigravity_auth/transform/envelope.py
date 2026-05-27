@@ -1,6 +1,7 @@
 """Antigravity request envelope wrapping with header building and URL construction."""
 from __future__ import annotations
 
+import copy
 import json
 import random
 import re
@@ -33,16 +34,24 @@ ANTIGRAVITY_API_CLIENTS = [
 ]
 
 MODEL_NAME_MAP: dict[str, str] = {
-    # Antigravity-prefixed names → Cloud Code API model IDs
+    # Antigravity-prefixed aliases → Cloud Code API model IDs
     "antigravity-gemini-3-pro": "gemini-3-pro-preview",
+    "antigravity-gemini-3-pro-preview": "gemini-3-pro-preview",
     "antigravity-gemini-3.1-pro": "gemini-3.1-pro-high",
+    "antigravity-gemini-3.1-pro-high": "gemini-3.1-pro-high",
     "antigravity-gemini-3.1-pro-low": "gemini-3.1-pro-low",
     "antigravity-gemini-3-flash": "gemini-3-flash-preview",
+    "antigravity-gemini-3-flash-preview": "gemini-3-flash-preview",
     "antigravity-gemini-3.5-flash": "gemini-3.5-flash-medium",
+    "antigravity-gemini-3.5-flash-high": "gemini-3.5-flash-high",
+    "antigravity-gemini-3.5-flash-medium": "gemini-3.5-flash-medium",
+    "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
+    "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
     "antigravity-claude-sonnet-4-6": "claude-sonnet-4-6",
     "antigravity-claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
     "antigravity-claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
     "antigravity-gpt-oss-120b": "gpt-oss-120b-medium",
+    "antigravity-gpt-oss-120b-medium": "gpt-oss-120b-medium",
     # Bare model ID passthroughs
     "gemini-3-pro-preview": "gemini-3-pro-preview",
     "gemini-3.1-pro-high": "gemini-3.1-pro-high",
@@ -80,9 +89,10 @@ def extract_model_from_url(url: str) -> str | None:
 
 
 def resolve_model_for_header_style(model: str, header_style: HeaderStyle) -> str:
-  if header_style == "gemini-cli" and model.startswith("antigravity-"):
-    return model[len("antigravity-"):]
-  return model
+  mapped = MODEL_NAME_MAP.get(model, model)
+  if header_style == "gemini-cli" and mapped.startswith("antigravity-"):
+    return mapped[len("antigravity-"):]
+  return mapped
 
 
 def get_randomized_antigravity_headers() -> dict[str, str]:
@@ -139,6 +149,11 @@ def build_antigravity_envelope(
   project_id: str,
   header_style: HeaderStyle = "antigravity",
 ) -> dict[str, Any]:
+  request_payload = copy.deepcopy(request_payload)
+  snake_system = request_payload.pop("system_instruction", None)
+  if snake_system is not None and "systemInstruction" not in request_payload:
+    request_payload["systemInstruction"] = snake_system
+
   envelope: dict[str, Any] = {
       "project": project_id,
       "model": model,
@@ -151,7 +166,7 @@ def build_antigravity_envelope(
     envelope["requestId"] = f"agent-{uuid.uuid4()}"
     
     request_dict: dict[str, Any] = envelope["request"]
-    existing = request_payload.get("systemInstruction") or request_payload.get("system_instruction")
+    existing = request_payload.get("systemInstruction")
     
     if existing:
       if isinstance(existing, dict):

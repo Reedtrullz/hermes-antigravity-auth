@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import copy
+import importlib
 import json
+import os
+import sys
+import types
 import unittest
+from typing import Any
 
 from antigravity_auth.transform.envelope import (
+    MODEL_NAME_MAP,
     build_antigravity_envelope,
     build_antigravity_headers,
     build_antigravity_url,
@@ -12,6 +19,159 @@ from antigravity_auth.transform.envelope import (
     is_antigravity_request,
     resolve_model_for_header_style,
 )
+
+
+_OAUTH_ENV_VARS = (
+    "HERMES_GEMINI_CLIENT_ID",
+    "HERMES_GEMINI_CLIENT_SECRET",
+    "ANTIGRAVITY_CLIENT_ID",
+    "ANTIGRAVITY_CLIENT_SECRET",
+)
+
+
+def _load_antigravity_models_with_provider_stubs():
+    import antigravity_auth
+
+    class ProviderProfile:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
+    providers_mod = types.ModuleType("providers")
+    providers_mod.__path__ = []
+    setattr(providers_mod, "register_provider", lambda provider: None)
+
+    base_mod = types.ModuleType("providers.base")
+    setattr(base_mod, "ProviderProfile", ProviderProfile)
+    setattr(providers_mod, "base", base_mod)
+
+    hermes_cli_mod = types.ModuleType("hermes_cli")
+
+    module_names = (
+        "providers",
+        "providers.base",
+        "hermes_cli",
+        "hermes_cli.models",
+        "hermes_cli.auth",
+        "antigravity_auth.hermes_provider_plugin",
+    )
+    sentinel = object()
+    previous_modules: dict[str, Any] = {
+        name: sys.modules.get(name, sentinel)
+        for name in module_names
+    }
+    previous_plugin_attr = getattr(
+        antigravity_auth,
+        "hermes_provider_plugin",
+        sentinel,
+    )
+    previous_env: dict[str, str | None] = {
+        name: os.environ.get(name)
+        for name in _OAUTH_ENV_VARS
+    }
+
+    sys.modules["providers"] = providers_mod
+    sys.modules["providers.base"] = base_mod
+    sys.modules["hermes_cli"] = hermes_cli_mod
+    sys.modules.pop("hermes_cli.models", None)
+    sys.modules.pop("hermes_cli.auth", None)
+    sys.modules.pop("antigravity_auth.hermes_provider_plugin", None)
+
+    try:
+        plugin = importlib.import_module("antigravity_auth.hermes_provider_plugin")
+        return tuple(plugin.ANTIGRAVITY_MODELS)
+    finally:
+        for name, value in previous_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        for name, module in previous_modules.items():
+            if module is sentinel:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        if previous_plugin_attr is sentinel:
+            if hasattr(antigravity_auth, "hermes_provider_plugin"):
+                delattr(antigravity_auth, "hermes_provider_plugin")
+        else:
+            setattr(
+                antigravity_auth,
+                "hermes_provider_plugin",
+                previous_plugin_attr,
+            )
+
+
+class TestLoadAntigravityModelsWithProviderStubs(unittest.TestCase):
+    def test_restores_stub_modules_and_parent_package_attribute(self):
+        import antigravity_auth
+
+        sentinel = object()
+        module_names = (
+            "providers",
+            "providers.base",
+            "hermes_cli",
+            "hermes_cli.models",
+            "hermes_cli.auth",
+            "antigravity_auth.hermes_provider_plugin",
+        )
+        original_modules: dict[str, Any] = {
+            name: sys.modules.get(name, sentinel)
+            for name in module_names
+        }
+        original_attr = getattr(
+            antigravity_auth,
+            "hermes_provider_plugin",
+            sentinel,
+        )
+
+        models = _load_antigravity_models_with_provider_stubs()
+
+        self.assertTrue(models)
+        if original_attr is sentinel:
+            self.assertFalse(hasattr(antigravity_auth, "hermes_provider_plugin"))
+        else:
+            self.assertIs(
+                getattr(antigravity_auth, "hermes_provider_plugin"),
+                original_attr,
+            )
+        for name, module in original_modules.items():
+            with self.subTest(module=name):
+                if module is sentinel:
+                    self.assertNotIn(name, sys.modules)
+                else:
+                    self.assertIn(name, sys.modules)
+                    self.assertIs(sys.modules[name], module)
+
+    def test_restores_oauth_environment_variables(self):
+        sentinel = object()
+        original_env = {
+            name: os.environ.get(name, sentinel)
+            for name in _OAUTH_ENV_VARS
+        }
+
+        os.environ.pop("HERMES_GEMINI_CLIENT_ID", None)
+        os.environ.pop("HERMES_GEMINI_CLIENT_SECRET", None)
+        os.environ["ANTIGRAVITY_CLIENT_ID"] = "stub-id"
+        os.environ["ANTIGRAVITY_CLIENT_SECRET"] = "stub-secret"
+
+        try:
+            models = _load_antigravity_models_with_provider_stubs()
+
+            self.assertTrue(models)
+            self.assertNotIn("HERMES_GEMINI_CLIENT_ID", os.environ)
+            self.assertNotIn("HERMES_GEMINI_CLIENT_SECRET", os.environ)
+            self.assertEqual(os.environ.get("ANTIGRAVITY_CLIENT_ID"), "stub-id")
+            self.assertEqual(
+                os.environ.get("ANTIGRAVITY_CLIENT_SECRET"),
+                "stub-secret",
+            )
+        finally:
+            for name, value in original_env.items():
+                if isinstance(value, str):
+                    os.environ[name] = value
+                else:
+                    os.environ.pop(name, None)
 
 
 class TestBuildAntigravityHeaders(unittest.TestCase):
@@ -50,11 +210,11 @@ class TestBuildAntigravityHeaders(unittest.TestCase):
 
 
 class TestResolveModelForHeaderStyle(unittest.TestCase):
-    def test_gemini_cli_strips_antigravity_prefix(self):
+    def test_gemini_cli_maps_antigravity_prefix(self):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3-pro", "gemini-cli"
         )
-        self.assertEqual("gemini-3-pro", result)
+        self.assertEqual("gemini-3-pro-preview", result)
 
     def test_gemini_cli_strips_antigravity_prefix_claude(self):
         result = resolve_model_for_header_style(
@@ -62,17 +222,17 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
         )
         self.assertEqual("claude-sonnet-4-6", result)
 
-    def test_antigravity_style_passthrough(self):
+    def test_antigravity_style_maps_aliases(self):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3-pro", "antigravity"
         )
-        self.assertEqual("antigravity-gemini-3-pro", result)
+        self.assertEqual("gemini-3-pro-preview", result)
 
-    def test_antigravity_style_passthrough_claude(self):
+    def test_antigravity_style_maps_claude_aliases(self):
         result = resolve_model_for_header_style(
             "antigravity-claude-sonnet-4-6", "antigravity"
         )
-        self.assertEqual("antigravity-claude-sonnet-4-6", result)
+        self.assertEqual("claude-sonnet-4-6", result)
 
     def test_no_prefix_no_change_for_gemini_cli(self):
         result = resolve_model_for_header_style(
@@ -91,13 +251,13 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3.5-flash", "gemini-cli"
         )
-        self.assertEqual("gemini-3.5-flash", result)
+        self.assertEqual("gemini-3.5-flash-medium", result)
 
     def test_gemini_cli_strips_prefix_3_1_pro_high(self):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3.1-pro", "gemini-cli"
         )
-        self.assertEqual("gemini-3.1-pro", result)
+        self.assertEqual("gemini-3.1-pro-high", result)
 
     def test_gemini_cli_strips_prefix_sonnet_thinking(self):
         result = resolve_model_for_header_style(
@@ -109,7 +269,27 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
         result = resolve_model_for_header_style(
             "antigravity-gpt-oss-120b", "gemini-cli"
         )
-        self.assertEqual("gpt-oss-120b", result)
+        self.assertEqual("gpt-oss-120b-medium", result)
+
+    def test_resolve_model_for_header_style_uses_model_name_map_for_antigravity_aliases(self):
+        self.assertEqual(
+            "gemini-3.1-pro-high",
+            resolve_model_for_header_style("antigravity-gemini-3.1-pro", "antigravity"),
+        )
+        self.assertEqual(
+            "claude-sonnet-4-6-thinking",
+            resolve_model_for_header_style(
+                "antigravity-claude-sonnet-4-6-thinking", "antigravity"
+            ),
+        )
+
+    def test_resolve_model_for_header_style_matches_antigravity_model_table(self):
+        for model in _load_antigravity_models_with_provider_stubs():
+            with self.subTest(model=model):
+                self.assertEqual(
+                    MODEL_NAME_MAP.get(model, model),
+                    resolve_model_for_header_style(model, "antigravity"),
+                )
 
 
 class TestBuildAntigravityUrl(unittest.TestCase):
@@ -156,6 +336,42 @@ class TestBuildAntigravityUrl(unittest.TestCase):
 
 
 class TestBuildAntigravityEnvelope(unittest.TestCase):
+    def test_build_antigravity_envelope_does_not_mutate_input_or_leave_snake_case_system_instruction(self):
+        payload = {
+            "contents": [],
+            "system_instruction": {"parts": [{"text": "sys"}]},
+        }
+        original = copy.deepcopy(payload)
+
+        envelope = build_antigravity_envelope(
+            payload,
+            model="claude-sonnet-4-6",
+            project_id="proj",
+        )
+
+        self.assertEqual(payload, original)
+        self.assertIn("systemInstruction", envelope["request"])
+        self.assertNotIn("system_instruction", envelope["request"])
+
+    def test_build_antigravity_envelope_does_not_mutate_nested_system_instruction_parts(self):
+        payload = {
+            "contents": [],
+            "systemInstruction": {"parts": [{"text": "sys"}]},
+        }
+        original = copy.deepcopy(payload)
+
+        envelope = build_antigravity_envelope(
+            payload,
+            model="claude-sonnet-4-6",
+            project_id="proj",
+        )
+
+        self.assertEqual(payload, original)
+        self.assertIn(
+            "You are Antigravity",
+            envelope["request"]["systemInstruction"]["parts"][0]["text"],
+        )
+
     def test_antigravity_style_includes_system_instruction(self):
         envelope = build_antigravity_envelope(
             request_payload={"contents": []},
