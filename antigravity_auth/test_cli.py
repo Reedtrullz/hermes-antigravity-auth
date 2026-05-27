@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 from .storage import get_hermes_home
-from .cli import delete_account, run_login_flow
+from .cli import check_quotas_and_verify, delete_account, interactive_accounts_menu, run_login_flow
 from . import cli as cli_module
 
 class TestCli(unittest.TestCase):
@@ -50,6 +50,68 @@ class TestCli(unittest.TestCase):
         loaded = load_accounts()
         self.assertEqual(len(loaded["accounts"]), 1)
         self.assertEqual(loaded["accounts"][0]["email"], "keep@example.com")
+
+    def test_check_quotas_refreshes_with_packed_project_id(self):
+        from .storage import save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "proj-1",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+        calls = []
+
+        def fake_refresh(auth, **kwargs):
+            calls.append(auth["refresh"])
+            return {"access": "access", "refresh": "rotated|proj-1", "expires": 123}
+
+        with patch("antigravity_auth.token.refresh_access_token", side_effect=fake_refresh), \
+             patch("antigravity_auth.accounts.quota.fetch_quota_from_api", return_value=[]), \
+             patch("antigravity_auth.verification.verify_account_access"):
+            check_quotas_and_verify()
+
+        self.assertEqual(calls, ["raw-refresh|proj-1"])
+
+    def test_account_switch_syncs_rotated_packed_refresh_with_managed_project_id(self):
+        from .storage import save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "proj-1",
+                "managedProjectId": "managed-1",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+        refresh_calls = []
+        sync_calls = []
+
+        def fake_refresh(auth, **kwargs):
+            refresh_calls.append(auth["refresh"])
+            return {"access": "access", "refresh": "rotated|proj-1|managed-1", "expires": 123}
+
+        def fake_sync(**kwargs):
+            sync_calls.append(kwargs)
+            return True
+
+        with patch("builtins.input", side_effect=["3", "0", "6"]), \
+             patch("antigravity_auth.token.refresh_access_token", side_effect=fake_refresh), \
+             patch("antigravity_auth.cli.sync_token_to_all_auth_stores", side_effect=fake_sync):
+            interactive_accounts_menu()
+
+        self.assertEqual(refresh_calls, ["raw-refresh|proj-1|managed-1"])
+        self.assertEqual(sync_calls[0]["access_token"], "access")
+        self.assertEqual(sync_calls[0]["refresh_token"], "rotated|proj-1|managed-1")
+        self.assertEqual(sync_calls[0]["project_id"], "proj-1")
+        self.assertEqual(sync_calls[0]["email"], "user@example.com")
+        self.assertEqual(sync_calls[0]["expires_ms"], 123)
+        self.assertTrue(sync_calls[0]["set_active"])
 
 if __name__ == "__main__":
     unittest.main()

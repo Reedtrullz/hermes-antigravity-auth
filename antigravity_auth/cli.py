@@ -322,10 +322,16 @@ def check_quotas_and_verify():
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (Missing credentials)")
             continue
 
+        packed_refresh = format_refresh_parts({
+            "refreshToken": refresh_token,
+            "projectId": project_id,
+            "managedProjectId": acc.get("managedProjectId") or "",
+        })
+
         # Refresh access token
         try:
             from .token import refresh_access_token
-            refreshed = refresh_access_token({"refresh": refresh_token})
+            refreshed = refresh_access_token({"refresh": packed_refresh, "email": email})
             access_token = refreshed.get("access", "")
         except Exception:
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (Token refresh error)")
@@ -413,13 +419,15 @@ def interactive_accounts_menu():
                             packed_refresh = format_refresh_parts({
                                 "refreshToken": acc.get("refreshToken", ""),
                                 "projectId": acc.get("projectId") or "",
+                                "managedProjectId": acc.get("managedProjectId") or "",
                             })
                             # Get a fresh access token for the auth.json
                             expires_ms = None
                             try:
                                 from .token import refresh_access_token
-                                refreshed = refresh_access_token({"refresh": packed_refresh})
+                                refreshed = refresh_access_token({"refresh": packed_refresh, "email": acc.get("email")})
                                 access_token = refreshed.get("access", "")
+                                packed_refresh = refreshed.get("refresh") or packed_refresh
                                 expires_ms = refreshed.get("expires")
                             except Exception:
                                 access_token = ""  # fallback to empty if refresh fails
