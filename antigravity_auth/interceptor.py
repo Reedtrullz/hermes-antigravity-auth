@@ -35,6 +35,16 @@ def _select_header_style_for_model(model: str, cli_first: bool) -> str:
   return "antigravity"
 
 
+def _request_model_from_response(response: httpx.Response) -> str:
+  try:
+    body = json.loads(response.request.content)
+    if isinstance(body, dict):
+      return str(body.get("model") or "")
+  except Exception:
+    return ""
+  return ""
+
+
 def _packed_refresh_for_account(account: Any) -> str:
   from .token import format_refresh_parts
   parts = account.refresh_parts
@@ -253,6 +263,8 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     
     model = str(body.get("model", ""))
     header_style = _select_header_style_for_model(model, config.cli_first)
+    request.extensions["antigravity_header_style"] = header_style
+    request.extensions["antigravity_model_family"] = _model_family_for_model(model)
 
     if header_style == "gemini-cli":
         logger.warning(
@@ -289,6 +301,15 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
 def _antigravity_response_hook(response: httpx.Response) -> None:
     from .config import get_config
     config = get_config()
+    model = _request_model_from_response(response)
+    try:
+        request_extensions = response.request.extensions
+    except Exception:
+        request_extensions = {}
+    family = request_extensions.get("antigravity_model_family") or _model_family_for_model(model)
+    header_style = request_extensions.get(
+        "antigravity_header_style"
+    ) or _select_header_style_for_model(model, config.cli_first)
 
     if response.status_code == 401 and config.proactive_token_refresh:
         try:
@@ -322,16 +343,29 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
     if response.status_code == 403:
         try:
             from .accounts.manager import get_or_create_global_manager
+            from .accounts.quota import compute_soft_quota_cache_ttl_ms
             mgr = get_or_create_global_manager()
-            active = mgr.get_current_account_for_family("gemini")
+            active = mgr.get_current_account_for_family(family)
             if active:
                 import time
                 active.cooling_down_until = (time.time() + 86400) * 1000
                 active.cooldown_reason = "auth-failure"
                 mgr.save_to_disk()
-                next_acc = mgr.get_current_or_next_for_family("gemini", strategy="hybrid")
+                soft_quota_cache_ttl_ms = compute_soft_quota_cache_ttl_ms(
+                    config.soft_quota_cache_ttl_minutes,
+                    config.quota_refresh_interval_minutes,
+                )
+                next_acc = mgr.get_current_or_next_for_family(
+                    family,
+                    model=model,
+                    strategy=config.account_selection_strategy,
+                    header_style=header_style,
+                    pid_offset_enabled=config.pid_offset_enabled,
+                    soft_quota_threshold_percent=config.soft_quota_threshold_percent,
+                    soft_quota_cache_ttl_ms=soft_quota_cache_ttl_ms,
+                )
                 if next_acc is None:
-                    logger.warning("All gemini accounts exhausted — cannot rotate after 403")
+                    logger.warning("All %s accounts exhausted — cannot rotate after 403", family)
                 elif next_acc.index != active.index:
                     from .token import format_refresh_parts, refresh_access_token
                     from .auth_sync import sync_token_to_google_oauth
@@ -348,28 +382,40 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                             project_id=next_acc.refresh_parts.project_id or "", email=next_acc.email,
                             expires_ms=r.get("expires"),
                         )
-                        logger.info("Rotated to %s after 403", next_acc.email)
+                        logger.info("Rotated to %s after 403 for %s", next_acc.email, family)
         except Exception as e:
             logger.warning("403 handler error: %s", e)
 
     if response.status_code == 429 and config.switch_on_first_rate_limit:
         try:
             from .accounts.manager import get_or_create_global_manager
+            from .accounts.quota import compute_soft_quota_cache_ttl_ms
             from .accounts.ratelimit import mark_rate_limited
             mgr = get_or_create_global_manager()
-            active = mgr.get_current_account_for_family("gemini")
+            active = mgr.get_current_account_for_family(family)
             if active:
                 retry = config.default_retry_after_seconds
                 rh = response.headers.get("Retry-After") or response.headers.get("retry-after")
                 if rh:
                     try: retry = int(rh)
                     except ValueError: pass
-                mark_rate_limited(active, float(retry * 1000), "gemini", "antigravity")
-                mark_rate_limited(active, float(retry * 1000), "gemini", "gemini-cli")
+                mark_rate_limited(active, float(retry * 1000), family, header_style, model)
                 mgr.save_to_disk()
-                next_acc = mgr.get_current_or_next_for_family("gemini", strategy="hybrid")
+                soft_quota_cache_ttl_ms = compute_soft_quota_cache_ttl_ms(
+                    config.soft_quota_cache_ttl_minutes,
+                    config.quota_refresh_interval_minutes,
+                )
+                next_acc = mgr.get_current_or_next_for_family(
+                    family,
+                    model=model,
+                    strategy=config.account_selection_strategy,
+                    header_style=header_style,
+                    pid_offset_enabled=config.pid_offset_enabled,
+                    soft_quota_threshold_percent=config.soft_quota_threshold_percent,
+                    soft_quota_cache_ttl_ms=soft_quota_cache_ttl_ms,
+                )
                 if next_acc is None:
-                    logger.warning("All gemini accounts exhausted — cannot rotate after rate limit")
+                    logger.warning("All %s accounts exhausted — cannot rotate after rate limit", family)
                 elif next_acc.index != active.index:
                     from .token import format_refresh_parts, refresh_access_token
                     from .auth_sync import sync_token_to_google_oauth
@@ -386,7 +432,7 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                             project_id=next_acc.refresh_parts.project_id or "", email=next_acc.email,
                             expires_ms=r.get("expires"),
                         )
-                        logger.info("Rotated to %s after rate limit", next_acc.email)
+                        logger.info("Rotated to %s after rate limit for %s", next_acc.email, family)
         except Exception as e:
             logger.warning("Rate limit handler error: %s", e)
 

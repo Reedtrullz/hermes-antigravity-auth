@@ -112,6 +112,21 @@ class TestRequestHook(unittest.TestCase):
             self.hook(r)
         build_headers.assert_called_once_with(header_style="antigravity")
 
+    def test_request_hook_records_header_style_and_model_family_metadata(self):
+        r = self._make_request(model="claude-sonnet-4-6-thinking")
+        config = type("Config", (), {
+            "cli_first": True,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 90,
+        })()
+        with patch("antigravity_auth.interceptor.get_config", return_value=config):
+            self.hook(r)
+        self.assertEqual(r.extensions["antigravity_header_style"], "antigravity")
+        self.assertEqual(r.extensions["antigravity_model_family"], "claude")
+
     def test_request_hook_sets_authorization_for_selected_account(self):
         class FakeRefreshParts:
             refresh_token = "refresh-1"
@@ -355,6 +370,233 @@ class TestResponseHook(unittest.TestCase):
         else:
             os.environ.pop("HERMES_HOME", None)
         self.temp_dir.cleanup()
+
+    def _make_response(self, model="gemini-3.1-pro-high", status=429, header_style="antigravity"):
+        body = {"project": "proj", "model": model, "request": {"contents": []}}
+        req = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+            json=body,
+        )
+        req.read()
+        req.extensions["antigravity_header_style"] = header_style
+        req.extensions["antigravity_model_family"] = "claude" if "claude" in model else "gemini"
+        return httpx.Response(status, request=req, headers={"Retry-After": "3"})
+
+    def test_429_for_claude_marks_claude_family(self):
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            index = 1
+
+        class FakeManager:
+            def __init__(self):
+                self.current_family = None
+                self.next_family = None
+                self.account = FakeAccount()
+
+            def get_current_account_for_family(self, family):
+                self.current_family = family
+                return self.account
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                self.next_family = family
+                return self.account
+
+            def save_to_disk(self):
+                return True
+
+        mgr = FakeManager()
+        calls = []
+
+        def fake_mark(account, retry_after_ms, family, header_style, model=None):
+            calls.append((family, header_style, model))
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": False,
+        })()
+        response = self._make_response(model="claude-sonnet-4-6-thinking", status=429)
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ), patch(
+            "antigravity_auth.accounts.ratelimit.mark_rate_limited",
+            side_effect=fake_mark,
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertEqual(mgr.current_family, "claude")
+        self.assertEqual(calls, [("claude", "antigravity", "claude-sonnet-4-6-thinking")])
+
+    def test_429_marks_only_actual_header_style(self):
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            index = 1
+
+        class FakeManager:
+            def __init__(self):
+                self.account = FakeAccount()
+
+            def get_current_account_for_family(self, family):
+                return self.account
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                return self.account
+
+            def save_to_disk(self):
+                return True
+
+        calls = []
+
+        def fake_mark(account, retry_after_ms, family, header_style, model=None):
+            calls.append((family, header_style, model))
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": True,
+        })()
+        response = self._make_response(
+            model="gemini-3.1-pro-high",
+            status=429,
+            header_style="antigravity",
+        )
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=FakeManager(),
+        ), patch(
+            "antigravity_auth.accounts.ratelimit.mark_rate_limited",
+            side_effect=fake_mark,
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertEqual(calls, [("gemini", "antigravity", "gemini-3.1-pro-high")])
+
+    def test_429_rotation_uses_configured_selection_context(self):
+        from antigravity_auth.accounts.quota import compute_soft_quota_cache_ttl_ms
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            index = 1
+
+        class FakeManager:
+            def __init__(self):
+                self.account = FakeAccount()
+                self.next_family = None
+                self.next_kwargs = None
+
+            def get_current_account_for_family(self, family):
+                return self.account
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                self.next_family = family
+                self.next_kwargs = kwargs
+                return self.account
+
+            def save_to_disk(self):
+                return True
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": True,
+            "account_selection_strategy": "round-robin",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 77,
+            "soft_quota_cache_ttl_minutes": 5,
+            "quota_refresh_interval_minutes": 15,
+        })()
+        mgr = FakeManager()
+        response = self._make_response(
+            model="gemini-3.1-pro-high",
+            status=429,
+            header_style="antigravity",
+        )
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ), patch("antigravity_auth.accounts.ratelimit.mark_rate_limited"):
+            _antigravity_response_hook(response)
+
+        self.assertEqual(mgr.next_family, "gemini")
+        self.assertEqual(mgr.next_kwargs, {
+            "model": "gemini-3.1-pro-high",
+            "strategy": "round-robin",
+            "header_style": "antigravity",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 77,
+            "soft_quota_cache_ttl_ms": compute_soft_quota_cache_ttl_ms(5, 15),
+        })
+
+    def test_403_rotation_uses_configured_selection_context(self):
+        from antigravity_auth.accounts.quota import compute_soft_quota_cache_ttl_ms
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            index = 2
+
+        class FakeManager:
+            def __init__(self):
+                self.account = FakeAccount()
+                self.current_family = None
+                self.next_family = None
+                self.next_kwargs = None
+
+            def get_current_account_for_family(self, family):
+                self.current_family = family
+                return self.account
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                self.next_family = family
+                self.next_kwargs = kwargs
+                return self.account
+
+            def save_to_disk(self):
+                return True
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "cli_first": False,
+            "account_selection_strategy": "round-robin",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 77,
+            "soft_quota_cache_ttl_minutes": 5,
+            "quota_refresh_interval_minutes": 15,
+            "default_retry_after_seconds": 10,
+        })()
+        mgr = FakeManager()
+        response = self._make_response(
+            model="gemini-3.1-pro-high",
+            status=403,
+            header_style="gemini-cli",
+        )
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertEqual(mgr.current_family, "gemini")
+        self.assertEqual(mgr.next_family, "gemini")
+        self.assertEqual(mgr.next_kwargs, {
+            "model": "gemini-3.1-pro-high",
+            "strategy": "round-robin",
+            "header_style": "gemini-cli",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 77,
+            "soft_quota_cache_ttl_ms": compute_soft_quota_cache_ttl_ms(5, 15),
+        })
 
     def test_401_syncs_rotated_refresh_token_to_google_oauth(self):
         from antigravity_auth.interceptor import _antigravity_response_hook
