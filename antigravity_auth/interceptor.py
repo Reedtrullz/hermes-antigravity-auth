@@ -240,7 +240,26 @@ def _apply_claude_transforms(inner_request: dict) -> None:
   Mutates ``inner_request`` in-place.
   """
 
-  # 1. Set VALIDATED mode for tool calling
+  try:
+    config = get_config()
+    keep_thinking = bool(getattr(config, "keep_thinking", False))
+  except Exception:
+    keep_thinking = False
+  if not keep_thinking:
+    try:
+      from .transform.thinking import deep_filter_thinking_blocks
+      deep_filter_thinking_blocks(inner_request)
+    except Exception:
+      pass
+
+  # 1. Create/normalize VALIDATED mode for tool calling
+  tools = inner_request.get("tools")
+  has_function_declarations = any(
+    isinstance(group, dict) and group.get("functionDeclarations")
+    for group in tools
+  ) if isinstance(tools, list) else False
+  if has_function_declarations and not isinstance(inner_request.get("toolConfig"), dict):
+    inner_request["toolConfig"] = {}
   tool_config = inner_request.get("toolConfig")
   if isinstance(tool_config, dict):
     fcc = tool_config.get("functionCallingConfig")

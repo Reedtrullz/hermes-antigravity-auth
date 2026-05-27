@@ -1,13 +1,24 @@
 """Tests for _apply_claude_transforms in interceptor.py."""
 
-import copy
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from antigravity_auth.interceptor import _apply_claude_transforms
 
 
 class TestApplyClaudeTransforms(unittest.TestCase):
   """Unit tests for Claude-specific request transforms."""
+
+  def setUp(self):
+    self.get_config_patcher = patch(
+      "antigravity_auth.interceptor.get_config",
+      return_value=SimpleNamespace(keep_thinking=False),
+    )
+    self.mock_get_config = self.get_config_patcher.start()
+
+  def tearDown(self):
+    self.get_config_patcher.stop()
 
   def _make_request(self, **overrides):
     req = {
@@ -104,9 +115,51 @@ class TestApplyClaudeTransforms(unittest.TestCase):
     self.assertEqual(
       req["toolConfig"]["functionCallingConfig"]["mode"], "VALIDATED")
 
-  def test_no_tool_config_is_safe(self):
-    req = self._make_request()
-    del req["toolConfig"]
-    _apply_claude_transforms(req)
-    # No crash — tool_config is just missing
-    self.assertNotIn("toolConfig", req)
+  def test_apply_claude_transforms_creates_validated_tool_config_when_tools_exist(self):
+    inner: dict[str, object] = {
+      "tools": [{
+        "functionDeclarations": [{
+          "name": "x",
+          "parameters": {"type": "object", "properties": {}},
+        }],
+      }],
+    }
+    _apply_claude_transforms(inner)
+    tool_config = inner.get("toolConfig")
+    if not isinstance(tool_config, dict):
+      self.fail("toolConfig was not created")
+    function_calling_config = tool_config.get("functionCallingConfig")
+    if not isinstance(function_calling_config, dict):
+      self.fail("functionCallingConfig was not created")
+    self.assertEqual(function_calling_config["mode"], "VALIDATED")
+
+  def test_apply_claude_transforms_strips_stale_thinking_parts_by_default(self):
+    inner = {
+      "contents": [{
+        "role": "model",
+        "parts": [
+          {"thought": True, "text": "old reasoning", "thoughtSignature": "sig"},
+          {"text": "visible"},
+        ],
+      }],
+    }
+    _apply_claude_transforms(inner)
+    self.assertEqual(inner["contents"][0]["parts"], [{"text": "visible"}])
+    self.mock_get_config.assert_called_once()
+
+  def test_apply_claude_transforms_preserves_thinking_parts_when_configured(self):
+    self.mock_get_config.return_value = SimpleNamespace(keep_thinking=True)
+    inner = {
+      "contents": [{
+        "role": "model",
+        "parts": [
+          {"thought": True, "text": "old reasoning", "thoughtSignature": "sig"},
+          {"text": "visible"},
+        ],
+      }],
+    }
+    _apply_claude_transforms(inner)
+    self.assertEqual(inner["contents"][0]["parts"], [
+      {"thought": True, "text": "old reasoning", "thoughtSignature": "sig"},
+      {"text": "visible"},
+    ])
