@@ -197,19 +197,28 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
 
     if response.status_code == 401 and config.proactive_token_refresh:
         try:
-            from .token import refresh_access_token
+            from .token import format_refresh_parts, refresh_access_token
             from .storage import load_accounts
-            from .cli import sync_token_to_google_oauth
+            from .auth_sync import sync_token_to_google_oauth
             d = load_accounts()
             accs = d.get("accounts", [])
             idx = d.get("activeIndex", 0)
             if 0 <= idx < len(accs):
                 a = accs[idx]
-                r = refresh_access_token({"refresh": a.get("refreshToken", "")})
+                raw_refresh = a.get("refreshToken", "")
+                if not raw_refresh:
+                    return
+                packed_refresh = format_refresh_parts({
+                    "refreshToken": raw_refresh,
+                    "projectId": a.get("projectId") or "",
+                    "managedProjectId": a.get("managedProjectId") or "",
+                })
+                r = refresh_access_token({"refresh": packed_refresh, "email": a.get("email")})
                 if r.get("access"):
+                    synced_refresh = r.get("refresh") or packed_refresh
                     sync_token_to_google_oauth(
-                        access_token=r["access"], refresh_token=a.get("refreshToken", ""),
-                        project_id=a.get("projectId", ""), email=a.get("email"),
+                        access_token=r["access"], refresh_token=synced_refresh,
+                        project_id=a.get("projectId") or "", email=a.get("email"),
                         expires_ms=r.get("expires"),
                     )
         except Exception as e:
@@ -229,12 +238,18 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                 if next_acc is None:
                     logger.warning("All gemini accounts exhausted — cannot rotate after 403")
                 elif next_acc.index != active.index:
-                    from .token import refresh_access_token
-                    from .cli import sync_token_to_google_oauth
-                    r = refresh_access_token({"refresh": next_acc.refresh_parts.refresh_token})
+                    from .token import format_refresh_parts, refresh_access_token
+                    from .auth_sync import sync_token_to_google_oauth
+                    packed_refresh = format_refresh_parts({
+                        "refreshToken": next_acc.refresh_parts.refresh_token,
+                        "projectId": next_acc.refresh_parts.project_id or "",
+                        "managedProjectId": next_acc.refresh_parts.managed_project_id or "",
+                    })
+                    r = refresh_access_token({"refresh": packed_refresh, "email": next_acc.email})
                     if r.get("access"):
+                        synced_refresh = r.get("refresh") or packed_refresh
                         sync_token_to_google_oauth(
-                            access_token=r["access"], refresh_token=next_acc.refresh_parts.refresh_token,
+                            access_token=r["access"], refresh_token=synced_refresh,
                             project_id=next_acc.refresh_parts.project_id or "", email=next_acc.email,
                             expires_ms=r.get("expires"),
                         )
@@ -261,12 +276,18 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
                 if next_acc is None:
                     logger.warning("All gemini accounts exhausted — cannot rotate after rate limit")
                 elif next_acc.index != active.index:
-                    from .token import refresh_access_token
-                    from .cli import sync_token_to_google_oauth
-                    r = refresh_access_token({"refresh": next_acc.refresh_parts.refresh_token})
+                    from .token import format_refresh_parts, refresh_access_token
+                    from .auth_sync import sync_token_to_google_oauth
+                    packed_refresh = format_refresh_parts({
+                        "refreshToken": next_acc.refresh_parts.refresh_token,
+                        "projectId": next_acc.refresh_parts.project_id or "",
+                        "managedProjectId": next_acc.refresh_parts.managed_project_id or "",
+                    })
+                    r = refresh_access_token({"refresh": packed_refresh, "email": next_acc.email})
                     if r.get("access"):
+                        synced_refresh = r.get("refresh") or packed_refresh
                         sync_token_to_google_oauth(
-                            access_token=r["access"], refresh_token=next_acc.refresh_parts.refresh_token,
+                            access_token=r["access"], refresh_token=synced_refresh,
                             project_id=next_acc.refresh_parts.project_id or "", email=next_acc.email,
                             expires_ms=r.get("expires"),
                         )

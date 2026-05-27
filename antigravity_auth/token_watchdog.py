@@ -44,7 +44,7 @@ def _refresh_if_needed(config) -> None:
     """Check the active account's token and refresh if within buffer window."""
     try:
         from .storage import load_accounts
-        from .token import refresh_access_token
+        from .token import format_refresh_parts, refresh_access_token
         from agent.google_oauth import load_credentials as load_google_creds
     except ImportError:
         return  # Hermes not available
@@ -62,23 +62,29 @@ def _refresh_if_needed(config) -> None:
 
     # Token is within buffer window or expired — refresh
     try:
-        from .cli import sync_token_to_google_oauth
+        from .auth_sync import sync_token_to_google_oauth
         accounts_data = load_accounts()
         active_idx = accounts_data.get("activeIndex", 0)
         accounts = accounts_data.get("accounts", [])
 
         if 0 <= active_idx < len(accounts):
             acc = accounts[active_idx]
-            refresh_parts = acc.get("refreshToken", "")
-            if not refresh_parts:
+            raw_refresh = acc.get("refreshToken", "")
+            if not raw_refresh:
                 return
-            refreshed = refresh_access_token({"refresh": refresh_parts})
+            packed_refresh = format_refresh_parts({
+                "refreshToken": raw_refresh,
+                "projectId": acc.get("projectId") or "",
+                "managedProjectId": acc.get("managedProjectId") or "",
+            })
+            refreshed = refresh_access_token({"refresh": packed_refresh, "email": acc.get("email")})
             new_token = refreshed.get("access", "")
             if new_token:
+                synced_refresh = refreshed.get("refresh") or packed_refresh
                 sync_token_to_google_oauth(
                     access_token=new_token,
-                    refresh_token=refresh_parts,
-                    project_id=acc.get("projectId", ""),
+                    refresh_token=synced_refresh,
+                    project_id=acc.get("projectId") or "",
                     email=acc.get("email"),
                     expires_ms=refreshed.get("expires"),
                 )

@@ -10,11 +10,11 @@ from urllib.parse import urlparse
 
 try:
     from .constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
-    from .token import refresh_access_token
+    from .token import format_refresh_parts, parse_refresh_parts, refresh_access_token
     from .storage import sync_token_to_auth_json
 except ImportError:
     from constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
-    from token import refresh_access_token
+    from token import format_refresh_parts, parse_refresh_parts, refresh_access_token
     from storage import sync_token_to_auth_json
 
 
@@ -277,8 +277,28 @@ def probe_account_health(account: dict) -> VerificationProbeResult:
             message="Missing refresh token for account.",
         )
 
+    refresh_parts = parse_refresh_parts(refresh_token)
+    raw_refresh_token = refresh_parts.get("refreshToken") or ""
+    project_id_for_sync = (
+        account.get("projectId")
+        or account.get("project_id")
+        or refresh_parts.get("projectId")
+        or ""
+    )
+    managed_project_id = (
+        account.get("managedProjectId")
+        or account.get("managed_project_id")
+        or refresh_parts.get("managedProjectId")
+        or ""
+    )
+    packed_refresh = format_refresh_parts({
+        "refreshToken": raw_refresh_token,
+        "projectId": project_id_for_sync,
+        "managedProjectId": managed_project_id,
+    })
+
     try:
-        auth: dict = {"refresh": refresh_token}
+        auth: dict = {"refresh": packed_refresh}
         if account.get("email"):
             auth["email"] = account["email"]
         refreshed = refresh_access_token(auth)
@@ -295,25 +315,36 @@ def probe_account_health(account: dict) -> VerificationProbeResult:
             message="Could not refresh access token for this account.",
         )
 
-    # Persist the refreshed token to auth.json
-    project_id_for_sync = (
-        account.get("managedProjectId")
-        or account.get("projectId")
-        or account.get("project_id")
-    ) or ""
+    synced_refresh = refreshed.get("refresh") or packed_refresh
     email_for_sync = account.get("email")
     sync_token_to_auth_json(
         access_token=access_token,
-        refresh_token=refresh_token,
+        refresh_token=synced_refresh,
         project_id=project_id_for_sync,
         email=email_for_sync,
         set_active=False
     )
+    try:
+        try:
+            from .auth_sync import sync_token_to_google_oauth
+        except ImportError:
+            from auth_sync import sync_token_to_google_oauth
+        sync_token_to_google_oauth(
+            access_token=access_token,
+            refresh_token=synced_refresh,
+            project_id=project_id_for_sync,
+            email=email_for_sync,
+            expires_ms=refreshed.get("expires"),
+        )
+    except Exception:
+        pass
 
     project_id = (
         account.get("managedProjectId")
         or account.get("projectId")
         or account.get("project_id")
+        or refresh_parts.get("managedProjectId")
+        or refresh_parts.get("projectId")
     ) or None
 
     return verify_account_access(

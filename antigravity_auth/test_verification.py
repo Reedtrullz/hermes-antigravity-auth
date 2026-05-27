@@ -1,4 +1,7 @@
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from antigravity_auth.verification import (
     VerificationProbeResult,
@@ -179,6 +182,66 @@ class TestExtractVerificationErrorDetails(unittest.TestCase):
         result = extract_verification_error_details(body)
         self.assertTrue(result["validationRequired"])
         self.assertIsNotNone(result["message"])
+
+
+class TestProbeAccountHealth(unittest.TestCase):
+    def test_syncs_rotated_refresh_token_to_google_oauth(self):
+        from antigravity_auth.verification import probe_account_health
+
+        account = {
+            "email": "user@example.com",
+            "refreshToken": "old-refresh",
+            "projectId": "proj-1",
+            "managedProjectId": "managed-1",
+        }
+        refresh_calls = []
+        synced = []
+
+        def fake_refresh(auth, **kwargs):
+            refresh_calls.append(auth["refresh"])
+            return {
+                "access": "new-access",
+                "refresh": "new-refresh|proj-1|managed-1",
+                "expires": 123,
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"HERMES_HOME": tmpdir}), \
+                 patch("antigravity_auth.verification.refresh_access_token", side_effect=fake_refresh), \
+                 patch("antigravity_auth.verification.verify_account_access", return_value=VerificationProbeResult("ok", "ok")), \
+                 patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", side_effect=lambda **kw: synced.append(kw) or True):
+                result = probe_account_health(account)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(refresh_calls, ["old-refresh|proj-1|managed-1"])
+        self.assertEqual(synced[0]["refresh_token"], "new-refresh|proj-1|managed-1")
+        self.assertEqual(synced[0]["project_id"], "proj-1")
+        self.assertEqual(synced[0]["email"], "user@example.com")
+        self.assertEqual(synced[0]["expires_ms"], 123)
+
+    def test_google_oauth_sync_failure_is_non_fatal(self):
+        from antigravity_auth.verification import probe_account_health
+
+        account = {
+            "email": "user@example.com",
+            "refreshToken": "old-refresh",
+            "projectId": "proj-1",
+            "managedProjectId": "managed-1",
+        }
+        refreshed = {
+            "access": "new-access",
+            "refresh": "new-refresh|proj-1|managed-1",
+            "expires": 123,
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.dict(os.environ, {"HERMES_HOME": tmpdir}), \
+                 patch("antigravity_auth.verification.refresh_access_token", return_value=refreshed), \
+                 patch("antigravity_auth.verification.verify_account_access", return_value=VerificationProbeResult("ok", "ok")), \
+                 patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", side_effect=RuntimeError("sync boom")):
+                result = probe_account_health(account)
+
+        self.assertEqual(result.status, "ok")
 
 
 if __name__ == "__main__":
