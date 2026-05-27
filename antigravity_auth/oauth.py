@@ -38,9 +38,11 @@ except ImportError:
 
 _log = createLogger(__name__)
 
-# In-memory PKCE verifier store: state_id -> {"verifier": str, "projectId": str}
+# In-memory PKCE verifier store:
+# state_id -> {"verifier": str, "projectId": str, "createdAt": str}
 # Keys are random, never exposed to browser. Entries consumed on exchange.
 _pkce_verifier_store: dict[str, dict[str, str]] = {}
+_PKCE_VERIFIER_TTL_SECONDS = 600
 
 def generate_pkce() -> dict:
     verifier = secrets.token_urlsafe(64)
@@ -64,8 +66,30 @@ def decode_state(state: str) -> dict:
         raise ValueError("Invalid state format")
     return parsed
 
+def _pkce_entry_expired(entry: dict[str, str], now: float) -> bool:
+    try:
+        created_at = float(entry.get("createdAt", ""))
+    except (TypeError, ValueError):
+        return False
+    return now - created_at >= _PKCE_VERIFIER_TTL_SECONDS
+
+def _cleanup_expired_pkce_verifiers(now: float | None = None) -> None:
+    """Remove abandoned PKCE verifier entries without failing login flow."""
+    try:
+        current_time = time.time() if now is None else now
+        expired_state_ids = [
+            state_id
+            for state_id, entry in list(_pkce_verifier_store.items())
+            if isinstance(entry, dict) and _pkce_entry_expired(entry, current_time)
+        ]
+        for state_id in expired_state_ids:
+            _pkce_verifier_store.pop(state_id, None)
+    except Exception:
+        pass
+
 def get_pkce_verifier(state_id: str) -> dict[str, str] | None:
     """Retrieve and consume the PKCE verifier for a state ID."""
+    _cleanup_expired_pkce_verifiers()
     return _pkce_verifier_store.pop(state_id, None)
 
 def _ensure_credentials():
@@ -77,14 +101,18 @@ def _ensure_credentials():
         )
 
 def authorize_antigravity(project_id: str = "") -> dict:
+    now = time.time()
+    _cleanup_expired_pkce_verifiers(now)
     from .constants import require_credentials
     cid, csec = require_credentials()
     pkce = generate_pkce()
     
     state_id = secrets.token_urlsafe(32)
+    encoded_state = encode_state({"id": state_id})
     _pkce_verifier_store[state_id] = {
         "verifier": pkce["verifier"],
         "projectId": project_id or "",
+        "createdAt": str(now),
     }
     
     params = {
@@ -94,7 +122,7 @@ def authorize_antigravity(project_id: str = "") -> dict:
         "scope": " ".join(ANTIGRAVITY_SCOPES),
         "code_challenge": pkce["challenge"],
         "code_challenge_method": "S256",
-        "state": encode_state({"id": state_id}),
+        "state": encoded_state,
         "access_type": "offline",
         "prompt": "consent",
     }
@@ -103,6 +131,7 @@ def authorize_antigravity(project_id: str = "") -> dict:
     return {
         "url": url,
         "verifier": pkce["verifier"],
+        "state": encoded_state,
         "projectId": project_id or "",
         "project_id": project_id or "",
     }
@@ -217,7 +246,7 @@ def exchange_antigravity(code: str, state: str) -> dict:
         token_headers = {
             "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
             "Accept": "*/*",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate",
             "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
         }
         

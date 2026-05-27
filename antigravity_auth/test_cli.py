@@ -33,9 +33,33 @@ class TestCli(unittest.TestCase):
                 "projectId": "project_123"
             }
 
-            with patch("builtins.input", return_value="http://localhost:51121/?code=auth_code_123&state=state_abc"):
+            with patch("builtins.input", return_value="http://localhost:51121/?code=***&state=state_abc"):
                 success = run_login_flow(project_id="project_123", no_browser=True)
                 self.assertTrue(success)
+
+    def test_run_login_flow_manual_code_only_uses_returned_state(self):
+        auth_data = {
+            "url": "https://auth",
+            "verifier": "v",
+            "state": "encoded-state",
+            "projectId": "project_123",
+            "project_id": "project_123",
+        }
+        with patch.object(cli_module, "authorize_antigravity", return_value=auth_data), \
+             patch("builtins.input", return_value="manual-code"), \
+             patch.object(cli_module, "exchange_antigravity") as mock_exchange, \
+             patch.object(cli_module, "sync_token_to_all_auth_stores"):
+            mock_exchange.return_value = {
+                "type": "success",
+                "email": "test@example.com",
+                "refresh": "refresh_abc|project_123",
+                "access": "access_xyz",
+                "expires": 9999999999,
+                "projectId": "project_123",
+            }
+            success = run_login_flow(project_id="project_123", no_browser=True)
+        self.assertTrue(success)
+        mock_exchange.assert_called_once_with("manual-code", "encoded-state")
 
     def test_delete_account(self):
         from .storage import load_accounts, save_accounts

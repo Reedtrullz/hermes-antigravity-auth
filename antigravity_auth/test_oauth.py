@@ -96,6 +96,35 @@ class TestOAuth(unittest.TestCase):
             # state should be encoded
             self.assertIn('state=', result['url'])
 
+    def test_authorize_returns_state_for_manual_code_only_flow(self):
+        with patch('antigravity_auth.constants._credentials_valid', True), \
+             patch('antigravity_auth.constants.ANTIGRAVITY_CLIENT_ID', 'test_client_id'), \
+             patch('antigravity_auth.constants.ANTIGRAVITY_CLIENT_SECRET', 'test_client_secret'), \
+             patch('antigravity_auth.oauth.ANTIGRAVITY_REDIRECT_URI', 'http://localhost:51121/oauth-callback'), \
+             patch('antigravity_auth.oauth.ANTIGRAVITY_SCOPES', ['scope1', 'scope2']):
+            data = authorize_antigravity(project_id="proj")
+        self.assertIn("state", data)
+        self.assertTrue(data["state"])
+        decoded = decode_state(data["state"])
+        self.assertIn("id", decoded)
+
+    def test_get_pkce_verifier_expires_old_entries(self):
+        _pkce_verifier_store["old"] = {"verifier": "v", "projectId": "p", "createdAt": "0"}
+        with patch("antigravity_auth.oauth.time.time", return_value=999999):
+            self.assertIsNone(get_pkce_verifier("old"))
+        self.assertNotIn("old", _pkce_verifier_store)
+
+    def test_authorize_stores_created_at_with_current_time(self):
+        with patch('antigravity_auth.constants._credentials_valid', True), \
+             patch('antigravity_auth.constants.ANTIGRAVITY_CLIENT_ID', 'test_client_id'), \
+             patch('antigravity_auth.constants.ANTIGRAVITY_CLIENT_SECRET', 'test_client_secret'), \
+             patch('antigravity_auth.oauth.ANTIGRAVITY_REDIRECT_URI', 'http://localhost:51121/oauth-callback'), \
+             patch('antigravity_auth.oauth.ANTIGRAVITY_SCOPES', ['scope1', 'scope2']), \
+             patch('antigravity_auth.oauth.time.time', return_value=123.0):
+            data = authorize_antigravity(project_id="proj")
+        decoded = decode_state(data["state"])
+        self.assertEqual(_pkce_verifier_store[decoded["id"]]["createdAt"], "123.0")
+
     @patch('antigravity_auth.oauth.make_post_request')
     def test_fetch_project_id_success(self, mock_make_post):
         # Mock a successful response
@@ -145,6 +174,20 @@ class TestOAuth(unittest.TestCase):
             self.assertIn('expires', result)
             # Verify the verifier was consumed
             self.assertIsNone(get_pkce_verifier(state_id))
+
+    @patch('antigravity_auth.oauth.make_post_request')
+    @patch('antigravity_auth.oauth.make_get_request')
+    def test_exchange_antigravity_token_headers_do_not_request_brotli(self, mock_make_get, mock_make_post):
+        mock_make_post.return_value = (200, b'{"access_token": "access_token", "refresh_token": "refresh_token", "expires_in": 3600}')
+        mock_make_get.return_value = (200, b'{"email": "test@example.com"}')
+        state_id = "test_state_id_headers"
+        _pkce_verifier_store[state_id] = {"verifier": "test_verifier", "projectId": "test_project"}
+        state = encode_state({"id": state_id})
+        result = exchange_antigravity('fake_code', state)
+        self.assertEqual(result['type'], 'success')
+        token_headers = mock_make_post.call_args_list[0][0][1]
+        self.assertEqual(token_headers["Accept-Encoding"], "gzip, deflate")
+        self.assertNotIn("br", token_headers["Accept-Encoding"])
 
     @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_token_failure(self, mock_make_post):
