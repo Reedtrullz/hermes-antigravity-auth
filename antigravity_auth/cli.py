@@ -1,20 +1,37 @@
 """CLI subcommands for OAuth login, account management, and quota checks."""
+import os
+import sys
+
+if __package__ in (None, ""):
+    _PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _PROJECT_ROOT = os.path.dirname(_PACKAGE_DIR)
+    _PACKAGE_DIR_REAL = os.path.normcase(os.path.realpath(_PACKAGE_DIR))
+    _PROJECT_ROOT_REAL = os.path.normcase(os.path.realpath(_PROJECT_ROOT))
+
+    if not any(
+        os.path.normcase(os.path.realpath(path or os.getcwd())) == _PROJECT_ROOT_REAL
+        for path in sys.path
+    ):
+        sys.path.insert(0, _PROJECT_ROOT)
+
+    sys.path[:] = [
+        path
+        for path in sys.path
+        if os.path.normcase(os.path.realpath(path or os.getcwd())) != _PACKAGE_DIR_REAL
+    ]
+    __package__ = "antigravity_auth"
+
 import http.server
 import socketserver
-import webbrowser
 import threading
-import sys
 import time
-from urllib.parse import urlparse, parse_qs
+import webbrowser
+from urllib.parse import parse_qs, urlparse
 
-try:
-    from .oauth import authorize_antigravity, exchange_antigravity
-    from .storage import load_accounts, save_accounts, sync_token_to_auth_json
-    from .token import parse_refresh_parts, format_refresh_parts
-except ImportError:
-    from oauth import authorize_antigravity, exchange_antigravity
-    from storage import load_accounts, save_accounts, sync_token_to_auth_json
-    from token import parse_refresh_parts, format_refresh_parts
+from .auth_sync import sync_token_to_all_auth_stores, sync_token_to_google_oauth
+from .oauth import authorize_antigravity, exchange_antigravity
+from .storage import load_accounts, save_accounts, sync_token_to_auth_json
+from .token import format_refresh_parts, parse_refresh_parts
 
 
 class ThreadSafeHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
@@ -135,40 +152,6 @@ def run_callback_server(port: int = 51121, timeout: int = 60) -> tuple[str | Non
     return server.callback_code, server.callback_state
 
 
-def sync_token_to_google_oauth(
-    access_token: str,
-    refresh_token: str,
-    project_id: str = "",
-    email: str | None = None,
-    expires_ms: int | None = None,
-) -> bool:
-    """Dual-store architecture: writes to auth/google_oauth.json (Hermes runtime).
-    
-    This is the companion to storage.sync_token_to_auth_json (writes auth.json).
-    Both must be called when switching the active account to prevent the two
-    stores from diverging.
-    """
-    try:
-        from agent.google_oauth import GoogleCredentials, save_credentials
-    except Exception:
-        return False
-
-    parts = parse_refresh_parts(refresh_token)
-    resolved_project_id = project_id or parts.get("projectId") or ""
-    resolved_expires_ms = expires_ms or int(time.time() * 1000) + 3600 * 1000
-
-    credentials = GoogleCredentials(
-        access_token=access_token,
-        refresh_token=parts.get("refreshToken", ""),
-        expires_ms=resolved_expires_ms,
-        email=email or "",
-        project_id=resolved_project_id,
-        managed_project_id=parts.get("managedProjectId") or "",
-    )
-    save_credentials(credentials)
-    return True
-
-
 def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
     auth_data = authorize_antigravity(project_id=project_id)
     auth_url = auth_data["url"]
@@ -243,19 +226,13 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
     accounts_data["activeIndex"] = len(accounts_data["accounts"]) - 1
     save_accounts(accounts_data)
 
-    sync_token_to_auth_json(
-        access_token=result.get("access", ""),
-        refresh_token=refresh,
-        project_id=resolved_project_id,
-        email=email,
-        set_active=True
-    )
-    sync_token_to_google_oauth(
+    sync_token_to_all_auth_stores(
         access_token=result.get("access", ""),
         refresh_token=refresh,
         project_id=resolved_project_id,
         email=email,
         expires_ms=result.get("expires"),
+        set_active=True
     )
 
     print("-" * 60)
@@ -446,19 +423,13 @@ def interactive_accounts_menu():
                                 expires_ms = refreshed.get("expires")
                             except Exception:
                                 access_token = ""  # fallback to empty if refresh fails
-                            sync_token_to_auth_json(
-                                access_token=access_token,
-                                refresh_token=packed_refresh,
-                                project_id=acc.get("projectId") or "",
-                                email=acc.get("email"),
-                                set_active=True
-                            )
-                            sync_token_to_google_oauth(
+                            sync_token_to_all_auth_stores(
                                 access_token=access_token,
                                 refresh_token=packed_refresh,
                                 project_id=acc.get("projectId") or "",
                                 email=acc.get("email"),
                                 expires_ms=expires_ms,
+                                set_active=True
                             )
                             print(f"Set active account to: {acc.get('email')}")
                         else:

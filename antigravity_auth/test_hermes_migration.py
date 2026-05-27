@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -8,6 +9,45 @@ from unittest.mock import patch
 
 
 class TestHermesMigrationIntegration(unittest.TestCase):
+    def test_auth_sync_exports_google_oauth_sync(self):
+        from antigravity_auth.auth_sync import sync_token_to_google_oauth
+        self.assertTrue(callable(sync_token_to_google_oauth))
+
+    def test_auth_sync_top_level_fallback_import_exports_google_oauth_sync(self):
+        package_dir = Path(__file__).resolve().parent
+        script = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(package_dir)!r})\n"
+            "import auth_sync\n"
+            "print(callable(auth_sync.sync_token_to_google_oauth))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "True")
+
+    def test_cli_top_level_import_avoids_local_token_shadowing(self):
+        package_dir = Path(__file__).resolve().parent
+        script = (
+            "import sys\n"
+            f"sys.path.insert(0, {str(package_dir)!r})\n"
+            "import cli\n"
+            "assert hasattr(cli, 'sync_token_to_google_oauth')\n"
+            "print('CLI_TOP_LEVEL_OK')\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(result.stdout.strip(), "CLI_TOP_LEVEL_OK")
+
     def test_accounts_manager_imports_and_uses_hermes_home(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.dict(os.environ, {"HERMES_HOME": tmpdir}):
