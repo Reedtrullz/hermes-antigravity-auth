@@ -35,6 +35,83 @@ def _select_header_style_for_model(model: str, cli_first: bool) -> str:
   return "antigravity"
 
 
+def _packed_refresh_for_account(account: Any) -> str:
+  from .token import format_refresh_parts
+  parts = account.refresh_parts
+  return format_refresh_parts({
+    "refreshToken": parts.refresh_token,
+    "projectId": parts.project_id or "",
+    "managedProjectId": parts.managed_project_id or "",
+  })
+
+
+def _select_request_account(model: str, header_style: str, config: Any) -> dict[str, Any] | None:
+  try:
+    from .accounts.shared import get_or_create_global_manager
+    from .accounts.quota import compute_soft_quota_cache_ttl_ms
+    from .token import parse_refresh_parts, refresh_access_token
+    from .auth_sync import sync_token_to_all_auth_stores
+
+    family = _model_family_for_model(model)
+    soft_quota_cache_ttl_ms = compute_soft_quota_cache_ttl_ms(
+      config.soft_quota_cache_ttl_minutes,
+      config.quota_refresh_interval_minutes,
+    )
+    mgr = get_or_create_global_manager()
+    account = mgr.get_current_or_next_for_family(
+      family,
+      model=model,
+      strategy=config.account_selection_strategy,
+      header_style=header_style,
+      pid_offset_enabled=config.pid_offset_enabled,
+      soft_quota_threshold_percent=config.soft_quota_threshold_percent,
+      soft_quota_cache_ttl_ms=soft_quota_cache_ttl_ms,
+    )
+    if not account:
+      return None
+
+    packed_refresh = _packed_refresh_for_account(account)
+    refreshed = refresh_access_token({"refresh": packed_refresh, "email": account.email})
+    if not refreshed or not refreshed.get("access"):
+      return None
+
+    rotated_refresh = refreshed.get("refresh")
+    sync_refresh = rotated_refresh or packed_refresh
+    parsed_refresh = parse_refresh_parts(rotated_refresh) if rotated_refresh else None
+    sync_project_id = (
+      (parsed_refresh.get("projectId") if parsed_refresh else None)
+      or account.refresh_parts.project_id
+      or ""
+    )
+    sync_ok = sync_token_to_all_auth_stores(
+      access_token=refreshed["access"],
+      refresh_token=sync_refresh,
+      project_id=sync_project_id,
+      email=account.email,
+      expires_ms=refreshed.get("expires"),
+      set_active=True,
+    )
+    if not sync_ok:
+      return None
+
+    if parsed_refresh:
+      account.refresh_parts.refresh_token = (
+        parsed_refresh.get("refreshToken") or account.refresh_parts.refresh_token
+      )
+      account.refresh_parts.project_id = (
+        parsed_refresh.get("projectId") or account.refresh_parts.project_id
+      )
+      account.refresh_parts.managed_project_id = (
+        parsed_refresh.get("managedProjectId") or account.refresh_parts.managed_project_id
+      )
+    mgr.mark_account_used(account.index)
+    mgr.save_to_disk()
+    return {"access": refreshed["access"], "account": account, "family": family}
+  except Exception as e:
+    logger.warning("Request-time account selection failed: %s", e)
+    return None
+
+
 def _inject_tool_call_ids(inner_request: dict) -> None:
   """Inject auto-generated IDs into functionCall/functionResponse for Claude.
 
@@ -183,6 +260,7 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
             "Set cli_first: false in config to use the Antigravity header style."
         )
 
+    selected = _select_request_account(model, header_style, config)
     model = resolve_model_for_header_style(model, header_style)
     
     new_headers = build_antigravity_headers(header_style=header_style)
@@ -201,6 +279,9 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
                 request.headers["Client-Metadata"] = json.dumps(cm)
     except Exception:
         pass
+
+    if selected and selected.get("access"):
+        request.headers["Authorization"] = f"Bearer {selected['access']}"
 
     logger.debug("Antigravity headers injected for model=%s", model)
 

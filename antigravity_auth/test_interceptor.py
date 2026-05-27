@@ -39,8 +39,27 @@ class TestModelHeaderHelpers(unittest.TestCase):
 class TestRequestHook(unittest.TestCase):
 
     def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.original_hermes_home = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = self.temp_dir.name
+        from antigravity_auth.config import invalidate_config_cache
+        from antigravity_auth.accounts import shared
+        invalidate_config_cache()
+        self.original_shared_manager = shared.get_global_manager()
+        shared._instance = None
         from antigravity_auth.interceptor import _antigravity_request_hook
         self.hook = _antigravity_request_hook
+
+    def tearDown(self):
+        from antigravity_auth.config import invalidate_config_cache
+        from antigravity_auth.accounts import shared
+        shared._instance = self.original_shared_manager
+        if self.original_hermes_home is not None:
+            os.environ["HERMES_HOME"] = self.original_hermes_home
+        else:
+            os.environ.pop("HERMES_HOME", None)
+        invalidate_config_cache()
+        self.temp_dir.cleanup()
 
     def _make_request(self, model="gemini-3-flash-preview"):
         body = {
@@ -78,13 +97,232 @@ class TestRequestHook(unittest.TestCase):
 
     def test_claude_request_uses_antigravity_headers_when_cli_first_enabled(self):
         r = self._make_request(model="claude-sonnet-4-6-thinking")
-        config = type("Config", (), {"cli_first": True})()
+        config = type("Config", (), {
+            "cli_first": True,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 90,
+        })()
         with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
             "antigravity_auth.interceptor.build_antigravity_headers",
             return_value={"User-Agent": "antigravity-test"},
         ) as build_headers:
             self.hook(r)
         build_headers.assert_called_once_with(header_style="antigravity")
+
+    def test_request_hook_sets_authorization_for_selected_account(self):
+        class FakeRefreshParts:
+            refresh_token = "refresh-1"
+            project_id = "proj-1"
+            managed_project_id = "managed-1"
+
+        class FakeAccount:
+            index = 7
+            email = "selected@example.com"
+            refresh_parts = FakeRefreshParts()
+
+        class FakeManager:
+            def __init__(self):
+                self.family = None
+                self.model = None
+                self.strategy = None
+                self.header_style = None
+                self.pid_offset_enabled = None
+                self.soft_quota_threshold_percent = None
+                self.soft_quota_cache_ttl_ms = None
+                self.marked_index = None
+                self.saved = False
+
+            def get_current_or_next_for_family(
+                self,
+                family,
+                *,
+                model=None,
+                strategy=None,
+                header_style=None,
+                pid_offset_enabled=False,
+                soft_quota_threshold_percent=100,
+                soft_quota_cache_ttl_ms=600_000,
+            ):
+                self.family = family
+                self.model = model
+                self.strategy = strategy
+                self.header_style = header_style
+                self.pid_offset_enabled = pid_offset_enabled
+                self.soft_quota_threshold_percent = soft_quota_threshold_percent
+                self.soft_quota_cache_ttl_ms = soft_quota_cache_ttl_ms
+                return FakeAccount()
+
+            def mark_account_used(self, account_index):
+                self.marked_index = account_index
+
+            def save_to_disk(self):
+                self.saved = True
+                return True
+
+        fake_mgr = FakeManager()
+        config = type("Config", (), {
+            "cli_first": True,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 80,
+        })()
+        r = self._make_request(model="claude-sonnet-4-6-thinking")
+
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.shared.get_or_create_global_manager",
+            return_value=fake_mgr,
+        ), patch(
+            "antigravity_auth.token.refresh_access_token",
+            return_value={
+                "access": "selected-access",
+                "refresh": "refresh-1|proj-1|managed-1",
+                "expires": 123,
+            },
+        ), patch(
+            "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+            return_value=True,
+        ) as sync_all:
+            self.hook(r)
+
+        self.assertEqual(r.headers["Authorization"], "Bearer selected-access")
+        self.assertEqual(fake_mgr.family, "claude")
+        self.assertEqual(fake_mgr.model, "claude-sonnet-4-6-thinking")
+        self.assertEqual(fake_mgr.header_style, "antigravity")
+        sync_all.assert_called_once_with(
+            access_token="selected-access",
+            refresh_token="refresh-1|proj-1|managed-1",
+            project_id="proj-1",
+            email="selected@example.com",
+            expires_ms=123,
+            set_active=True,
+        )
+        self.assertEqual(fake_mgr.marked_index, 7)
+        self.assertTrue(fake_mgr.saved)
+
+    def test_request_hook_preserves_authorization_when_sync_reports_failure(self):
+        class FakeRefreshParts:
+            refresh_token = "refresh-1"
+            project_id = "proj-1"
+            managed_project_id = "managed-1"
+
+        class FakeAccount:
+            index = 7
+            email = "selected@example.com"
+            refresh_parts = FakeRefreshParts()
+
+        class FakeManager:
+            def __init__(self):
+                self.marked_index = None
+                self.saved = False
+
+            def get_current_or_next_for_family(self, *args, **kwargs):
+                return FakeAccount()
+
+            def mark_account_used(self, account_index):
+                self.marked_index = account_index
+
+            def save_to_disk(self):
+                self.saved = True
+                return True
+
+        fake_mgr = FakeManager()
+        config = type("Config", (), {
+            "cli_first": True,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 80,
+        })()
+        r = self._make_request(model="claude-sonnet-4-6-thinking")
+
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.shared.get_or_create_global_manager",
+            return_value=fake_mgr,
+        ), patch(
+            "antigravity_auth.token.refresh_access_token",
+            return_value={
+                "access": "selected-access",
+                "refresh": "rotated-refresh|proj-2|managed-2",
+                "expires": 123,
+            },
+        ), patch(
+            "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+            return_value=False,
+        ):
+            self.hook(r)
+
+        self.assertEqual(r.headers["Authorization"], "Bearer test")
+        self.assertIsNone(fake_mgr.marked_index)
+        self.assertFalse(fake_mgr.saved)
+
+    def test_request_hook_persists_rotated_refresh_before_saving_manager(self):
+        class FakeRefreshParts:
+            def __init__(self):
+                self.refresh_token = "old-refresh"
+                self.project_id = "proj-1"
+                self.managed_project_id = "managed-1"
+
+        class FakeAccount:
+            def __init__(self):
+                self.index = 7
+                self.email = "selected@example.com"
+                self.refresh_parts = FakeRefreshParts()
+
+        class FakeManager:
+            def __init__(self):
+                self.account = FakeAccount()
+                self.save_snapshot = None
+
+            def get_current_or_next_for_family(self, *args, **kwargs):
+                return self.account
+
+            def mark_account_used(self, account_index):
+                return None
+
+            def save_to_disk(self):
+                parts = self.account.refresh_parts
+                self.save_snapshot = (
+                    parts.refresh_token,
+                    parts.project_id,
+                    parts.managed_project_id,
+                )
+                return True
+
+        fake_mgr = FakeManager()
+        config = type("Config", (), {
+            "cli_first": True,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 80,
+        })()
+        r = self._make_request(model="claude-sonnet-4-6-thinking")
+
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.shared.get_or_create_global_manager",
+            return_value=fake_mgr,
+        ), patch(
+            "antigravity_auth.token.refresh_access_token",
+            return_value={
+                "access": "selected-access",
+                "refresh": "new-refresh|proj-2|managed-2",
+                "expires": 123,
+            },
+        ), patch(
+            "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+            return_value=True,
+        ):
+            self.hook(r)
+
+        self.assertEqual(fake_mgr.save_snapshot, ("new-refresh", "proj-2", "managed-2"))
+        self.assertEqual(r.headers["Authorization"], "Bearer selected-access")
 
     def test_passthrough_non_cloudcode(self):
         r = httpx.Request("GET", "https://example.com/api")
