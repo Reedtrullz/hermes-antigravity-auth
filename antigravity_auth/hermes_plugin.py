@@ -30,7 +30,12 @@ def register(ctx):
   try:
     from .interceptor import install as install_interceptor
     installed = install_interceptor()
-    logger.info("Antigravity interceptor install result: %s", installed)
+    if installed:
+      logger.info("Antigravity interceptor install result: %s", installed)
+    else:
+      logger.warning(
+        "Antigravity interceptor was not installed; plugin loaded without HTTP interception"
+      )
   except Exception as e:
     logger.warning("Antigravity interceptor install failed: %s", e)
 

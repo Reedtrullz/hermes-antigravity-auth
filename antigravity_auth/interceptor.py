@@ -10,6 +10,7 @@ import httpx
 
 from .config import get_config
 from .transform.envelope import (
+    HeaderStyle,
     build_antigravity_headers,
     resolve_model_for_header_style,
 )
@@ -28,7 +29,7 @@ def _model_family_for_model(model: str) -> str:
   return "gemini"
 
 
-def _select_header_style_for_model(model: str, cli_first: bool) -> str:
+def _select_header_style_for_model(model: str, cli_first: bool) -> HeaderStyle:
   lower = (model or "").lower()
   if cli_first and "gemini" in lower and "claude" not in lower:
     return "gemini-cli"
@@ -611,11 +612,20 @@ def install() -> bool:
     _wrap_http_client(self._http)
 
   def _patched_wrap_code_assist(*, project_id, model, inner_request, user_prompt_id=None):
-    if isinstance(inner_request, dict) and isinstance(model, str) and "claude" in model.lower():
+    resolved_model = model
+    if isinstance(model, str):
+      try:
+        cli_first = bool(getattr(get_config(), "cli_first", False))
+      except Exception:
+        cli_first = False
+      header_style = _select_header_style_for_model(model, cli_first)
+      resolved_model = resolve_model_for_header_style(model, header_style)
+    transform_model = f"{model} {resolved_model}" if isinstance(model, str) else str(resolved_model)
+    if isinstance(inner_request, dict) and "claude" in transform_model.lower():
       _inject_tool_call_ids(inner_request)
       _apply_claude_transforms(inner_request)
     return _ORIGINAL_WRAP_CODE_ASSIST(
-      project_id=project_id, model=model,
+      project_id=project_id, model=resolved_model,
       inner_request=inner_request, user_prompt_id=user_prompt_id,
     )
 

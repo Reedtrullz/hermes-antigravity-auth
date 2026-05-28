@@ -68,9 +68,12 @@ ANTIGRAVITY_MODELS = (
 )
 
 
+ANTIGRAVITY_ALIASES = ("antigravity", "antigravity-google", "ag", "gemini-cli", "gemini-oauth")
+
+
 antigravity = AntigravityProfile(
   name="google-gemini-cli",
-  aliases=("antigravity", "antigravity-google", "ag", "gemini-cli", "gemini-oauth"),
+  aliases=ANTIGRAVITY_ALIASES,
   display_name="Google Antigravity",
   description="Google Antigravity OAuth via Hermes' native Cloud Code transport",
   env_vars=(),
@@ -107,7 +110,7 @@ def _patch_hermes_model_picker() -> None:
   # Alias registration — non-fatal, best-effort.
   try:
     models._PROVIDER_LABELS["google-gemini-cli"] = label
-    for alias in ("antigravity", "antigravity-google", "ag"):
+    for alias in ANTIGRAVITY_ALIASES:
       models._PROVIDER_ALIASES[alias] = "google-gemini-cli"
   except Exception:
     pass
@@ -117,7 +120,7 @@ def _patch_hermes_model_picker() -> None:
     import hermes_cli.providers as cli_providers
 
     cli_providers._LABEL_OVERRIDES["google-gemini-cli"] = label
-    for alias in ("antigravity", "antigravity-google", "ag"):
+    for alias in ANTIGRAVITY_ALIASES:
       cli_providers.ALIASES[alias] = "google-gemini-cli"
   except Exception:
     pass
