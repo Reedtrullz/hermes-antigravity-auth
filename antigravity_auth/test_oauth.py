@@ -190,11 +190,23 @@ class TestOAuth(unittest.TestCase):
         self.assertNotIn("br", token_headers["Accept-Encoding"])
 
     @patch('antigravity_auth.oauth.make_post_request')
+    def test_exchange_antigravity_rejects_unknown_state_without_network(self, mock_make_post):
+        state = encode_state({"id": "missing_state_id"})
+        result = exchange_antigravity('fake_code', state)
+        self.assertEqual(result['type'], 'failed')
+        self.assertIn('PKCE verifier', result['error'])
+        mock_make_post.assert_not_called()
+
+    @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_token_failure(self, mock_make_post):
+        state_id = "test_state_id_token_failure"
+        _pkce_verifier_store[state_id] = {"verifier": "test_verifier", "projectId": "test_project"}
+        state = encode_state({"id": state_id})
         mock_make_post.return_value = (400, b'{"error": "invalid_grant"}')
-        result = exchange_antigravity('fake_code', 'fake_state')
+        result = exchange_antigravity('fake_code', state)
         self.assertEqual(result['type'], 'failed')
         self.assertIn('error', result)
+        self.assertTrue(mock_make_post.called)
 
     @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_missing_access_token(self, mock_make_post):

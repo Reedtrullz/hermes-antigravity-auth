@@ -231,6 +231,11 @@ def exchange_antigravity(code: str, state: str) -> dict:
         pkce_data = get_pkce_verifier(state_id) if state_id else None
         verifier = pkce_data.get("verifier", "") if pkce_data else ""
         project_id = pkce_data.get("projectId", "") if pkce_data else ""
+        if not verifier:
+            return {
+                "type": "failed",
+                "error": "Missing or expired PKCE verifier for OAuth state"
+            }
         
         start_time = int(time.time() * 1000)
         
