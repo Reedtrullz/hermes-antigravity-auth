@@ -44,7 +44,7 @@ checkout. A PyPI package may not be published yet; if one exists in the
 future, use the same credential, plugin-install, and authentication steps below.
 
 ```bash
-pip install git+https://github.com/Reedtrullz/hermes-antigravity-auth.git
+pip install "hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
 ```
 
 Or clone and install locally:
@@ -52,7 +52,7 @@ Or clone and install locally:
 ```bash
 git clone https://github.com/Reedtrullz/hermes-antigravity-auth.git
 cd hermes-antigravity-auth
-pip install -e .
+pip install -e ".[dev,yaml]"
 ```
 
 ### 2. Provide OAuth client credentials
@@ -148,7 +148,7 @@ In `hermes model` and the in-agent `/model` picker, Antigravity appears as
 
 1. Install from GitHub or a local checkout:
    ```bash
-   pip install git+https://github.com/Reedtrullz/hermes-antigravity-auth.git
+   pip install "hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
    ```
 
 2. Provide OAuth client credentials before login. Create a Google OAuth desktop
@@ -531,7 +531,7 @@ hermes-antigravity-auth/
 
 ```bash
 # Install locally
-pip install -e ".[dev]"
+pip install -e ".[dev,yaml]"
 
 # Run tests
 python3 -m pytest antigravity_auth/ -v

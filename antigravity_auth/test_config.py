@@ -245,6 +245,22 @@ plugins:
         assert config is not None
         self.assertTrue(config.debug)
 
+    def test_existing_yaml_without_pyyaml_warns(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from antigravity_auth import config as config_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config.yaml"
+            path.write_text("plugins:\n  entries:\n    antigravity:\n      debug: true\n", encoding="utf-8")
+            with patch.dict("sys.modules", {"yaml": None}), \
+                 patch.object(config_module.logger, "warning") as warning:
+                result = config_module.load_config_from_yaml(path)
+
+        self.assertIsNone(result)
+        warning.assert_called()
+
 
 class TestApplyEnvOverrides(unittest.TestCase):
     def setUp(self):

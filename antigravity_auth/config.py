@@ -1,12 +1,16 @@
 """Configuration dataclass with YAML loader and TTL cache."""
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
 from antigravity_auth.storage import get_hermes_home
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -173,6 +177,12 @@ def load_config_from_yaml(yaml_path: Path) -> Config | None:
   try:
     import yaml
   except ImportError:
+    logger.warning(
+      "Ignoring %s because PyYAML is not installed. Install with "
+      "hermes-antigravity-auth[yaml] or pip install pyyaml to enable YAML "
+      "configuration.",
+      yaml_path,
+    )
     return None
 
   try:
