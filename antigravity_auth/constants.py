@@ -1,30 +1,20 @@
 """OAuth client credentials, endpoints, default headers, and platform detection."""
-import os
 import sys
 
-# OAuth client credentials — load from environment with fallback to defaults
-# These are public OAuth 2.0 client credentials for a desktop application type.
-# They are embedded here for convenience but can be overridden via environment
-# variables for custom deployments.
-# Environment variables take priority over _credentials.py
-if "ANTIGRAVITY_CLIENT_ID" in os.environ:
-    ANTIGRAVITY_CLIENT_ID = os.environ.get("ANTIGRAVITY_CLIENT_ID", "")
-    ANTIGRAVITY_CLIENT_SECRET = os.environ.get("ANTIGRAVITY_CLIENT_SECRET", "")
-else:
-    try:
-        from ._credentials import (  # type: ignore  # noqa: F811
-            ANTIGRAVITY_CLIENT_ID,
-            ANTIGRAVITY_CLIENT_SECRET,
-        )
-    except ImportError:
-        ANTIGRAVITY_CLIENT_ID = ""
-        ANTIGRAVITY_CLIENT_SECRET = ""
+try:
+    from .credentials import resolve_oauth_credentials
+except ImportError:
+    from credentials import resolve_oauth_credentials
+
+# OAuth client credentials — resolve from environment or external Hermes-home file.
+# Environment variables take per-field priority over file values.
+ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET = resolve_oauth_credentials()
 
 _MISSING_CREDENTIALS_ERROR = (
     "Antigravity OAuth credentials not found.\n\n"
     "Options:\n"
     "  1. Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET env vars\n"
-    "  2. Create antigravity_auth/_credentials.py (see README for format)\n"
+    "  2. Create ~/.hermes/antigravity-credentials.json with client_id/client_secret\n"
     "  3. Reinstall the package: pip install --force-reinstall git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
 )
 

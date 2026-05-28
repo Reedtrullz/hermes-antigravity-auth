@@ -23,10 +23,12 @@ def _set_oauth_env_from_credentials() -> None:
 
   if not client_id or not client_secret:
     try:
-      from ._credentials import ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET
-      client_id = client_id or ANTIGRAVITY_CLIENT_ID
-      client_secret = client_secret or ANTIGRAVITY_CLIENT_SECRET
-    except ImportError:
+      from .credentials import resolve_oauth_credentials
+
+      resolved_id, resolved_secret = resolve_oauth_credentials()
+      client_id = client_id or resolved_id
+      client_secret = client_secret or resolved_secret
+    except Exception:
       pass
 
   if client_id:
