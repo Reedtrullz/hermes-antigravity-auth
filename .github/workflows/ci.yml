@@ -38,3 +38,27 @@ jobs:
           cd /tmp
           python -m pip install -e '.[dev]'
           python -m pytest antigravity_auth/ -q
+          python -m pip install build
+          python -m build --sdist --wheel
+          python - <<'PY'
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          artifacts = sorted(Path("dist").iterdir())
+          if not artifacts:
+            raise SystemExit("no artifacts found in dist/")
+          for artifact in artifacts:
+            if tarfile.is_tarfile(artifact):
+              with tarfile.open(artifact) as archive:
+                names = archive.getnames()
+            elif zipfile.is_zipfile(artifact):
+              with zipfile.ZipFile(artifact) as archive:
+                names = archive.namelist()
+            else:
+              raise SystemExit(f"unknown artifact type: {artifact}")
+            for name in names:
+              if name.endswith("antigravity_auth/_credentials.py"):
+                raise SystemExit(f"forbidden credentials module in {artifact}: {name}")
+          print("artifact contents OK")
+          PY
