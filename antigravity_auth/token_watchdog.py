@@ -84,7 +84,7 @@ def _refresh_if_needed(config) -> None:
             new_token = refreshed.get("access", "")
             if new_token:
                 synced_refresh = refreshed.get("refresh") or packed_refresh
-                sync_token_to_all_auth_stores(
+                sync_result = sync_token_to_all_auth_stores(
                     access_token=new_token,
                     refresh_token=synced_refresh,
                     project_id=acc.get("projectId") or "",
@@ -92,6 +92,16 @@ def _refresh_if_needed(config) -> None:
                     expires_ms=refreshed.get("expires"),
                     set_active=True,
                 )
+                if not getattr(sync_result, "auth_json", bool(sync_result)):
+                    logger.debug(
+                        "Proactive token refresh could not sync auth.json for %s",
+                        acc.get("email", "unknown"),
+                    )
+                    return
+                if not getattr(sync_result, "google_oauth", bool(sync_result)):
+                    logger.warning(
+                        "Native google_oauth sync failed during proactive refresh; refreshed auth.json token is still active"
+                    )
                 logger.debug("Proactively refreshed token for %s", acc.get("email", "unknown"))
     except Exception as exc:
         logger.debug("Proactive token refresh failed: %s", exc)

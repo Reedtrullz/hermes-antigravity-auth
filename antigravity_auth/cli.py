@@ -36,6 +36,21 @@ from .storage import load_accounts, normalize_active_indices_after_explicit_swit
 from .token import format_refresh_parts, parse_refresh_parts
 
 
+def _auth_sync_auth_json_ok(sync_result) -> bool:
+    return bool(getattr(sync_result, "auth_json", bool(sync_result)))
+
+
+def _auth_sync_google_oauth_ok(sync_result) -> bool:
+    return bool(getattr(sync_result, "google_oauth", bool(sync_result)))
+
+
+def _print_runtime_auth_sync_warnings(sync_result, context: str) -> None:
+    if not _auth_sync_auth_json_ok(sync_result):
+        print(f"WARNING: Could not sync {context} to Hermes auth.json; runtime authorization may remain unchanged.")
+    elif not _auth_sync_google_oauth_ok(sync_result):
+        print("WARNING: Native google_oauth sync failed; auth.json credentials are active.")
+
+
 class ThreadSafeHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -307,7 +322,7 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
     normalize_active_indices_after_explicit_switch(accounts_data, new_account_index)
     save_accounts(accounts_data)
 
-    sync_token_to_all_auth_stores(
+    sync_result = sync_token_to_all_auth_stores(
         access_token=result.get("access", ""),
         refresh_token=refresh,
         project_id=resolved_project_id,
@@ -315,6 +330,15 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
         expires_ms=result.get("expires"),
         set_active=True
     )
+
+    if not _auth_sync_auth_json_ok(sync_result):
+        print("-" * 60)
+        print("ERROR: Authentication was saved, but Hermes auth.json could not be updated.")
+        print("Runtime authorization may not be ready; please retry login or check file permissions.")
+        print("-" * 60)
+        return False
+    if not _auth_sync_google_oauth_ok(sync_result):
+        print("WARNING: Native google_oauth sync failed; auth.json credentials are active.")
 
     print("-" * 60)
     print("SUCCESS: Successfully authenticated!")
@@ -429,7 +453,7 @@ def delete_account(email_or_index: str) -> bool:
             pass
 
         try:
-            sync_token_to_all_auth_stores(
+            sync_result = sync_token_to_all_auth_stores(
                 access_token=access_token,
                 refresh_token=sync_refresh,
                 project_id=active.get("projectId") or "",
@@ -437,15 +461,17 @@ def delete_account(email_or_index: str) -> bool:
                 expires_ms=expires_ms,
                 set_active=True,
             )
-        except Exception:
-            pass
+            _print_runtime_auth_sync_warnings(sync_result, "active account")
+        except Exception as exc:
+            print(f"WARNING: Could not sync active account to Hermes auth.json: {exc}")
     else:
         try:
             # Clear both auth.json and google_oauth.json. The google_oauth helper
             # degrades gracefully if Hermes' native store is unavailable.
-            sync_token_to_all_auth_stores("", "", project_id="", email=None, set_active=False)
-        except Exception:
-            pass
+            sync_result = sync_token_to_all_auth_stores("", "", project_id="", email=None, set_active=False)
+            _print_runtime_auth_sync_warnings(sync_result, "cleared credentials")
+        except Exception as exc:
+            print(f"WARNING: Could not clear Hermes auth.json credentials: {exc}")
 
     return True
 
@@ -577,7 +603,7 @@ def interactive_accounts_menu():
                                 expires_ms = refreshed.get("expires")
                             except Exception:
                                 access_token = ""  # fallback to empty if refresh fails
-                            sync_token_to_all_auth_stores(
+                            sync_result = sync_token_to_all_auth_stores(
                                 access_token=access_token,
                                 refresh_token=packed_refresh,
                                 project_id=acc.get("projectId") or "",
@@ -585,6 +611,7 @@ def interactive_accounts_menu():
                                 expires_ms=expires_ms,
                                 set_active=True
                             )
+                            _print_runtime_auth_sync_warnings(sync_result, "selected account")
                             print(f"Set active account to: {acc.get('email')}")
                         else:
                             print("Invalid index.")

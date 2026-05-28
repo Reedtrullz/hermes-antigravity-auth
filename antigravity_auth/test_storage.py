@@ -171,7 +171,6 @@ class TestStorage(unittest.TestCase):
             email=None,
             set_active=False,
         )
-
         with open(get_auth_json_path(), "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -182,6 +181,56 @@ class TestStorage(unittest.TestCase):
             data["providers"]["google-gemini-cli"],
             data["providers"]["antigravity"],
         )
+
+    def test_sync_token_to_all_auth_stores_reports_google_oauth_failure_independently(self):
+        from antigravity_auth.auth_sync import sync_token_to_all_auth_stores
+
+        with patch("antigravity_auth.auth_sync.sync_token_to_auth_json") as auth_json_sync, \
+             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=False) as google_sync:
+            result = sync_token_to_all_auth_stores(
+                access_token="acc_111",
+                refresh_token="ref_222|proj_333",
+                project_id="proj_333",
+                email="user@example.com",
+                expires_ms=123,
+                set_active=True,
+            )
+
+        self.assertEqual(result.auth_json, True)
+        self.assertEqual(result.google_oauth, False)
+        self.assertEqual(result.ok, False)
+        self.assertEqual(bool(result), False)
+        auth_json_sync.assert_called_once()
+        google_sync.assert_called_once()
+
+    def test_sync_token_to_all_auth_stores_reports_auth_json_failure_independently(self):
+        from antigravity_auth.auth_sync import sync_token_to_all_auth_stores, sync_token_to_all_auth_stores_bool
+
+        with patch("antigravity_auth.auth_sync.sync_token_to_auth_json", side_effect=RuntimeError("boom")), \
+             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=True):
+            result = sync_token_to_all_auth_stores(
+                access_token="acc_111",
+                refresh_token="ref_222|proj_333",
+                project_id="proj_333",
+                email="user@example.com",
+            )
+
+        self.assertEqual(result.auth_json, False)
+        self.assertEqual(result.google_oauth, True)
+        self.assertEqual(result.ok, False)
+        self.assertEqual(bool(result), False)
+
+        with patch("antigravity_auth.auth_sync.sync_token_to_auth_json", side_effect=RuntimeError("boom")), \
+             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=True):
+            self.assertEqual(
+                sync_token_to_all_auth_stores_bool(
+                    access_token="acc_111",
+                    refresh_token="ref_222|proj_333",
+                    project_id="proj_333",
+                    email="user@example.com",
+                ),
+                False,
+            )
 
 
 if __name__ == "__main__":

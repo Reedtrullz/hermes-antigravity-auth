@@ -144,7 +144,7 @@ def _sync_token_to_all_auth_stores_best_effort(
         except ImportError:
             from auth_sync import sync_token_to_all_auth_stores
 
-        sync_token_to_all_auth_stores(
+        sync_result = sync_token_to_all_auth_stores(
             access_token=access_token,
             refresh_token=refresh_token,
             project_id=project_id,
@@ -152,6 +152,17 @@ def _sync_token_to_all_auth_stores_best_effort(
             expires_ms=expires_ms,
             set_active=set_active,
         )
+        if not getattr(sync_result, "auth_json", bool(sync_result)):
+            try:
+                sync_token_to_auth_json(
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    project_id=project_id,
+                    email=email,
+                    set_active=set_active,
+                )
+            except Exception:
+                pass
     except Exception:
         try:
             sync_token_to_auth_json(

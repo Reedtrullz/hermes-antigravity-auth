@@ -86,7 +86,7 @@ def _sync_refreshed_token_to_all_auth_stores(
     or project_id
     or ""
   )
-  sync_token_to_all_auth_stores(
+  sync_result = sync_token_to_all_auth_stores(
     access_token=refreshed["access"],
     refresh_token=sync_refresh,
     project_id=sync_project_id,
@@ -94,6 +94,10 @@ def _sync_refreshed_token_to_all_auth_stores(
     expires_ms=refreshed.get("expires"),
     set_active=True,
   )
+  if not getattr(sync_result, "auth_json", bool(sync_result)):
+    return None
+  if not getattr(sync_result, "google_oauth", bool(sync_result)):
+    logger.warning("Native google_oauth sync failed; refreshed auth.json token is still active")
   return parsed_refresh
 
 
@@ -164,7 +168,7 @@ def _select_request_account(model: str, header_style: str, config: Any) -> dict[
       or account.refresh_parts.project_id
       or ""
     )
-    sync_ok = sync_token_to_all_auth_stores(
+    sync_result = sync_token_to_all_auth_stores(
       access_token=refreshed["access"],
       refresh_token=sync_refresh,
       project_id=sync_project_id,
@@ -172,8 +176,10 @@ def _select_request_account(model: str, header_style: str, config: Any) -> dict[
       expires_ms=refreshed.get("expires"),
       set_active=True,
     )
-    if not sync_ok:
+    if not getattr(sync_result, "auth_json", bool(sync_result)):
       return None
+    if not getattr(sync_result, "google_oauth", bool(sync_result)):
+      logger.warning("Native google_oauth sync failed; using selected access token for outbound request")
 
     if parsed_refresh:
       account.refresh_parts.refresh_token = (
@@ -432,6 +438,10 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         if type(selected_index) is int:
             request.extensions["antigravity_selected_account_index"] = selected_index
         request.headers["Authorization"] = f"Bearer {selected['access']}"
+    else:
+        request.extensions["antigravity_account_selection_failed"] = True
+        if "Authorization" in request.headers:
+            del request.headers["Authorization"]
 
     logger.debug("Antigravity headers injected for model=%s", model)
 

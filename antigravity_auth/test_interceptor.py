@@ -87,10 +87,11 @@ class TestRequestHook(unittest.TestCase):
         self.assertNotIn("hermes-agent", ua)
         self.assertIn("Client-Metadata", r.headers)
 
-    def test_preserves_authorization(self):
+    def test_removes_authorization_when_no_account_selected(self):
         r = self._make_request()
         self.hook(r)
-        self.assertIn("Bearer test", r.headers.get("Authorization", ""))
+        self.assertNotIn("Authorization", r.headers)
+        self.assertEqual(r.extensions.get("antigravity_account_selection_failed"), True)
 
     def test_preserves_content_type(self):
         r = self._make_request()
@@ -222,7 +223,7 @@ class TestRequestHook(unittest.TestCase):
         self.assertEqual(fake_mgr.marked_index, 7)
         self.assertTrue(fake_mgr.saved)
 
-    def test_request_hook_preserves_authorization_when_sync_reports_failure(self):
+    def test_request_hook_removes_stale_authorization_when_sync_reports_full_failure(self):
         class FakeRefreshParts:
             refresh_token = "refresh-1"
             project_id = "proj-1"
@@ -275,9 +276,97 @@ class TestRequestHook(unittest.TestCase):
         ):
             self.hook(r)
 
-        self.assertEqual(r.headers["Authorization"], "Bearer test")
+        self.assertNotIn("Authorization", r.headers)
+        self.assertEqual(r.extensions.get("antigravity_account_selection_failed"), True)
         self.assertIsNone(fake_mgr.marked_index)
         self.assertFalse(fake_mgr.saved)
+
+    def test_request_hook_uses_selected_token_when_native_google_oauth_sync_fails(self):
+        from antigravity_auth.auth_sync import AuthSyncResult
+
+        class FakeRefreshParts:
+            refresh_token = "refresh-1"
+            project_id = "proj-1"
+            managed_project_id = "managed-1"
+
+        class FakeAccount:
+            index = 7
+            email = "selected@example.com"
+            refresh_parts = FakeRefreshParts()
+
+        class FakeManager:
+            def __init__(self):
+                self.marked_index = None
+                self.saved = False
+
+            def get_current_or_next_for_family(self, *args, **kwargs):
+                return FakeAccount()
+
+            def mark_account_used(self, account_index):
+                self.marked_index = account_index
+
+            def save_to_disk(self):
+                self.saved = True
+                return True
+
+        fake_mgr = FakeManager()
+        config = type("Config", (), {
+            "cli_first": True,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": True,
+            "soft_quota_threshold_percent": 80,
+        })()
+        r = self._make_request(model="claude-sonnet-4-6-thinking")
+
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.shared.get_or_create_global_manager",
+            return_value=fake_mgr,
+        ), patch(
+            "antigravity_auth.token.refresh_access_token",
+            return_value={
+                "access": "selected-access",
+                "refresh": "rotated-refresh|proj-2|managed-2",
+                "expires": 123,
+            },
+        ), patch(
+            "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+            return_value=AuthSyncResult(auth_json=True, google_oauth=False),
+        ), self.assertLogs("antigravity_auth.interceptor", level="WARNING") as logs:
+            self.hook(r)
+
+        self.assertEqual(r.headers["Authorization"], "Bearer selected-access")
+        self.assertEqual(r.extensions["antigravity_selected_account_index"], 7)
+        self.assertEqual(fake_mgr.marked_index, 7)
+        self.assertTrue(fake_mgr.saved)
+        self.assertTrue(any("Native google_oauth sync failed" in message for message in logs.output))
+
+    def test_request_hook_removes_stale_authorization_when_selection_fails(self):
+        from antigravity_auth.interceptor import _antigravity_request_hook
+
+        config = type("Config", (), {
+            "cli_first": False,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "sticky",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 100,
+        })()
+        request = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+            headers={"Authorization": "Bearer stale", "Content-Type": "application/json"},
+            json={"model": "claude-sonnet-4-6", "request": {"contents": []}},
+        )
+        request.read()
+
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), \
+             patch("antigravity_auth.interceptor._select_request_account", return_value=None):
+            _antigravity_request_hook(request)
+
+        self.assertNotEqual(request.headers.get("Authorization"), "Bearer stale")
+        self.assertEqual(request.extensions.get("antigravity_account_selection_failed"), True)
 
     def test_request_hook_persists_rotated_refresh_before_saving_manager(self):
         class FakeRefreshParts:
@@ -868,6 +957,35 @@ class TestResponseHook(unittest.TestCase):
         self.assertEqual(loaded["accounts"][0]["projectId"], "proj-2")
         self.assertEqual(loaded["accounts"][0]["managedProjectId"], "managed-2")
 
+    def test_refreshed_token_sync_returns_none_when_auth_json_sync_fails(self):
+        from antigravity_auth.auth_sync import AuthSyncResult
+        from antigravity_auth.interceptor import _sync_refreshed_token_to_all_auth_stores
+
+        with patch(
+            "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+            return_value=AuthSyncResult(auth_json=False, google_oauth=True),
+        ) as mock_sync:
+            parsed = _sync_refreshed_token_to_all_auth_stores(
+                refreshed={
+                    "access": "new-access",
+                    "refresh": "new-refresh|proj-2|managed-2",
+                    "expires": 123,
+                },
+                packed_refresh="old-refresh|proj-1|managed-1",
+                project_id="proj-1",
+                email="user@example.com",
+            )
+
+        self.assertIsNone(parsed)
+        mock_sync.assert_called_once_with(
+            access_token="new-access",
+            refresh_token="new-refresh|proj-2|managed-2",
+            project_id="proj-2",
+            email="user@example.com",
+            expires_ms=123,
+            set_active=True,
+        )
+
     def test_401_refreshes_selected_claude_account_not_global_active(self):
         from antigravity_auth.interceptor import _antigravity_response_hook
         from antigravity_auth.storage import load_accounts, save_accounts
@@ -1138,3 +1256,55 @@ class TestResponseHook(unittest.TestCase):
             "refresh": "family-refresh|proj-family|managed-family",
             "email": "family@example.com",
         }])
+
+    def test_token_watchdog_does_not_log_success_when_auth_json_sync_fails(self):
+        from antigravity_auth.auth_sync import AuthSyncResult
+        from antigravity_auth.storage import save_accounts
+        from antigravity_auth.token_watchdog import _refresh_if_needed
+
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "active@example.com",
+                "refreshToken": "active-refresh",
+                "projectId": "proj-active",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+
+        fake_agent = types.ModuleType("agent")
+        fake_google_oauth = types.ModuleType("agent.google_oauth")
+        setattr(fake_google_oauth, "load_credentials", lambda: type("Creds", (), {
+            "refresh_token": "stored-refresh",
+            "expires_ms": 0,
+        })())
+        original_agent = sys.modules.get("agent")
+        original_google_oauth = sys.modules.get("agent.google_oauth")
+        sys.modules["agent"] = fake_agent
+        sys.modules["agent.google_oauth"] = fake_google_oauth
+        config = type("Config", (), {"proactive_refresh_buffer_seconds": 1800})()
+
+        try:
+            with patch("antigravity_auth.token.refresh_access_token", return_value={
+                "access": "access-active",
+                "refresh": "active-rotated|proj-active",
+                "expires": 123,
+            }), patch(
+                "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+                return_value=AuthSyncResult(auth_json=False, google_oauth=True),
+            ), self.assertLogs("antigravity_auth.token_watchdog", level="DEBUG") as logs:
+                _refresh_if_needed(config)
+        finally:
+            if original_agent is None:
+                sys.modules.pop("agent", None)
+            else:
+                sys.modules["agent"] = original_agent
+            if original_google_oauth is None:
+                sys.modules.pop("agent.google_oauth", None)
+            else:
+                sys.modules["agent.google_oauth"] = original_google_oauth
+
+        output = "\n".join(logs.output)
+        self.assertIn("could not sync auth.json", output)
+        self.assertNotIn("Proactively refreshed token", output)

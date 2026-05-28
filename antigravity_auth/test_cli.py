@@ -70,6 +70,37 @@ class TestCli(unittest.TestCase):
         self.assertTrue(success)
         mock_exchange.assert_called_once_with("manual-code", "encoded-state")
 
+    def test_run_login_flow_returns_false_when_auth_json_sync_fails(self):
+        from antigravity_auth.auth_sync import AuthSyncResult
+
+        auth_data = {
+            "url": "https://auth",
+            "verifier": "v",
+            "state": "encoded-state",
+        }
+        with patch.object(cli_module, "authorize_antigravity", return_value=auth_data), \
+             patch("builtins.input", return_value="manual-code"), \
+             patch.object(cli_module, "exchange_antigravity", return_value={
+                 "type": "success",
+                 "email": "test@example.com",
+                 "refresh": "refresh_abc|project_123",
+                 "access": "access_xyz",
+                 "expires": 9999999999,
+                 "projectId": "project_123",
+             }), \
+             patch.object(
+                 cli_module,
+                 "sync_token_to_all_auth_stores",
+                 return_value=AuthSyncResult(auth_json=False, google_oauth=True),
+             ), \
+             patch("builtins.print") as mock_print:
+            success = run_login_flow(project_id="project_123", no_browser=True)
+
+        self.assertFalse(success)
+        printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("Hermes auth.json could not be updated", printed)
+        self.assertNotIn("SUCCESS: Successfully authenticated", printed)
+
     def test_run_login_flow_rejects_manual_redirect_state_mismatch(self):
         auth_data = {
             "url": "https://auth",
