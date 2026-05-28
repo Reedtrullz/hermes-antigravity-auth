@@ -73,6 +73,30 @@ class TestHermesPluginRegister(unittest.TestCase):
       for line in logs.output
     ))
 
+  def test_provider_plugin_installs_interceptor_best_effort(self):
+    import importlib
+    import sys
+    import types
+    from unittest.mock import Mock, patch
+
+    class FakeProviderProfile:
+      def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    providers = types.ModuleType("providers")
+    providers.register_provider = Mock()
+    providers_base = types.ModuleType("providers.base")
+    providers_base.ProviderProfile = FakeProviderProfile
+
+    with patch.dict(sys.modules, {
+      "providers": providers,
+      "providers.base": providers_base,
+    }), patch("antigravity_auth.interceptor.install", return_value=True) as install:
+      sys.modules.pop("antigravity_auth.hermes_provider_plugin", None)
+      importlib.import_module("antigravity_auth.hermes_provider_plugin")
+
+    install.assert_called_once()
+
   def test_provider_picker_registers_all_advertised_aliases(self):
     import importlib
     import antigravity_auth

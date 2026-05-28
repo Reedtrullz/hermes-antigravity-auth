@@ -159,3 +159,10 @@ try:
     PROVIDER_REGISTRY[_alias] = target
 except Exception:
   pass
+
+try:
+  from .interceptor import install as _install_interceptor
+
+  _install_interceptor()
+except Exception:
+  pass
