@@ -1016,6 +1016,25 @@ def _request_body_is_replayable(request: httpx.Request) -> bool:
         return False
 
 
+_RETRY_REPOPULATED_HEADER_NAMES = {
+    "authorization",
+    "user-agent",
+    "x-goog-api-client",
+    "client-metadata",
+}
+
+
+def _headers_for_retry(request: httpx.Request) -> httpx.Headers:
+    headers = request.headers.copy()
+    for name in list(headers.keys()):
+        lower = name.lower()
+        if lower in _RETRY_REPOPULATED_HEADER_NAMES:
+            del headers[name]
+        elif lower.startswith("antigravity-") or lower.startswith("x-antigravity-"):
+            del headers[name]
+    return headers
+
+
 def _clone_request_for_retry(request: httpx.Request) -> httpx.Request | None:
     try:
         request.read()
@@ -1030,7 +1049,7 @@ def _clone_request_for_retry(request: httpx.Request) -> httpx.Request | None:
     return httpx.Request(
         request.method,
         request.url,
-        headers=request.headers.copy(),
+        headers=_headers_for_retry(request),
         content=content,
         extensions=retry_extensions,
     )

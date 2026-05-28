@@ -12,6 +12,7 @@ from typing import Any
 
 from .redaction import redact_secret_text, redact_secrets
 from .storage import (
+  _process_lock_backend_name,
   get_accounts_json_path,
   get_auth_json_path,
   get_hermes_home,
@@ -99,6 +100,38 @@ def _check_interceptor() -> DoctorRow:
     return _row("FAIL", "interceptor", "interceptor is not installed and Hermes adapter symbols are unavailable", "Enable the plugin from within Hermes or install a compatible Hermes build.")
   except Exception as exc:
     return _row("FAIL", "interceptor", f"could not inspect interceptor: {exc}", "Reinstall hermes-antigravity-auth and rerun doctor.")
+
+
+def _check_retry_behavior() -> DoctorRow:
+  try:
+    from . import interceptor
+    if hasattr(interceptor, "_send_with_antigravity_retry") and hasattr(interceptor, "_clone_request_for_retry"):
+      return _row(
+        "WARN",
+        "automatic retry",
+        "enabled for replayable non-streaming 401/403/429 responses; streaming responses cannot be replayed automatically",
+        "If a streaming request fails after token refresh or account rotation, retry the user request manually.",
+      )
+    return _row(
+      "FAIL",
+      "automatic retry",
+      "retry wrapper symbols are missing",
+      "Reinstall hermes-antigravity-auth or upgrade to a build with bounded retry support.",
+    )
+  except Exception as exc:
+    return _row("FAIL", "automatic retry", f"could not inspect retry wrapper: {exc}", "Reinstall hermes-antigravity-auth and rerun doctor.")
+
+
+def _check_account_store_locking() -> DoctorRow:
+  backend, detail = _process_lock_backend_name()
+  if backend in ("fcntl", "msvcrt"):
+    return _row("PASS", "account store locking", f"transactional updates use {detail}")
+  return _row(
+    "WARN",
+    "account store locking",
+    "no inter-process file locking backend is available; transactional updates are only thread-safe inside this process",
+    "Run one Hermes Antigravity process at a time or use a Python/platform with fcntl.flock or msvcrt.locking support.",
+  )
 
 
 def _check_account_store() -> DoctorRow:
@@ -211,6 +244,8 @@ def run_doctor() -> list[DoctorRow]:
   rows.append(_check_entrypoint())
   rows.extend(_check_hermes_adapter())
   rows.append(_check_interceptor())
+  rows.append(_check_retry_behavior())
+  rows.append(_check_account_store_locking())
   rows.append(_check_account_store())
   rows.extend(_check_auth_files())
   rows.extend(_check_config())

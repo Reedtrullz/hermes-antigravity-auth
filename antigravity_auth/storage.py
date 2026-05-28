@@ -1,5 +1,6 @@
 """Persistent account and credential storage for Hermes Antigravity plugin."""
 import contextlib
+import logging
 import os
 import json
 import secrets
@@ -19,6 +20,9 @@ except ImportError:
     _auth_store_lock = threading.Lock()
 
 _accounts_store_lock = threading.RLock()
+_process_lock_warning_emitted = False
+_process_lock_warning_guard = threading.Lock()
+logger = logging.getLogger(__name__)
 
 
 def _secret_file_opener(path: str, flags: int) -> int:
@@ -30,6 +34,100 @@ def _lock_file_opener(path: str, flags: int) -> int:
     return os.open(path, flags | os.O_CREAT, 0o600)
 
 
+def _process_lock_backend_name() -> tuple[str | None, str]:
+    """Return the inter-process file locking backend available on this host."""
+    try:
+        import fcntl  # noqa: F401
+        return "fcntl", "POSIX fcntl.flock"
+    except Exception as fcntl_exc:
+        try:
+            import msvcrt  # noqa: F401
+            return "msvcrt", "Windows msvcrt.locking"
+        except Exception as msvcrt_exc:
+            return None, f"fcntl unavailable ({fcntl_exc}); msvcrt unavailable ({msvcrt_exc})"
+
+
+def _warn_process_lock_unavailable_once(lock_path: Path, reason: str) -> None:
+    global _process_lock_warning_emitted
+    with _process_lock_warning_guard:
+        if _process_lock_warning_emitted:
+            return
+        _process_lock_warning_emitted = True
+    logger.warning(
+        "Inter-process file locking is unavailable for %s; "
+        "account-store transactions are only thread-safe inside this process. "
+        "Run one Hermes Antigravity process at a time or install on a platform "
+        "with fcntl.flock/msvcrt.locking support. Reason: %s",
+        lock_path,
+        reason,
+    )
+
+
+def _acquire_process_file_lock(lock_file: Any, lock_path: Path) -> Callable[[], None]:
+    """Acquire a cross-process lock and return an idempotent unlock callback.
+
+    POSIX uses fcntl.flock. Native Windows uses msvcrt.locking over byte 0 of
+    the lock file. If neither backend is importable, we keep the existing
+    in-process RLock protection but emit a one-time warning instead of silently
+    pretending the transaction is process-safe.
+    """
+    try:
+        import fcntl
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        released = False
+
+        def unlock_fcntl() -> None:
+            nonlocal released
+            if released:
+                return
+            released = True
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
+
+        return unlock_fcntl
+    except Exception as fcntl_exc:
+        fcntl_reason = fcntl_exc
+
+    try:
+        import msvcrt
+    except Exception as msvcrt_exc:
+        _warn_process_lock_unavailable_once(
+            lock_path,
+            f"fcntl unavailable ({fcntl_reason}); msvcrt unavailable ({msvcrt_exc})",
+        )
+        return lambda: None
+
+    try:
+        lock_call = getattr(msvcrt, "locking")
+        lock_mode = getattr(msvcrt, "LK_LOCK")
+        unlock_mode = getattr(msvcrt, "LK_UNLCK")
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write("0")
+            lock_file.flush()
+        lock_file.seek(0)
+        lock_call(lock_file.fileno(), lock_mode, 1)
+    except Exception as exc:
+        raise RuntimeError(f"failed to acquire Windows process file lock for {lock_path}: {exc}") from exc
+
+    released = False
+
+    def unlock_msvcrt() -> None:
+        nonlocal released
+        if released:
+            return
+        released = True
+        try:
+            lock_file.seek(0)
+            lock_call(lock_file.fileno(), unlock_mode, 1)
+        except Exception:
+            pass
+
+    return unlock_msvcrt
+
+
 @contextlib.contextmanager
 def _process_file_lock(lock_path: Path):
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,19 +136,11 @@ def _process_file_lock(lock_path: Path):
             os.chmod(lock_path, 0o600)
         except Exception:
             pass
-        try:
-            import fcntl
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        except Exception:
-            pass
+        unlock = _acquire_process_file_lock(lock_file, lock_path)
         try:
             yield
         finally:
-            try:
-                import fcntl
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-            except Exception:
-                pass
+            unlock()
 
 
 def get_hermes_home() -> Path:

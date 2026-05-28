@@ -1,6 +1,9 @@
+import builtins
 import json
 import os
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -85,6 +88,55 @@ class TestStorage(unittest.TestCase):
             with _process_file_lock(lock_path):
                 self.assertTrue(lock_path.exists())
                 self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+
+    def test_process_lock_uses_msvcrt_when_fcntl_is_unavailable(self):
+        from antigravity_auth import storage
+
+        calls = []
+        fake_msvcrt = types.SimpleNamespace(
+            LK_LOCK=7,
+            LK_UNLCK=8,
+            locking=lambda fd, mode, nbytes: calls.append((mode, nbytes)),
+        )
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "fcntl":
+                raise ImportError("no fcntl in this test")
+            return original_import(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "store.lock"
+            with patch.dict(sys.modules, {"msvcrt": fake_msvcrt}):
+                with patch("builtins.__import__", side_effect=fake_import):
+                    with storage._process_file_lock(lock_path):
+                        self.assertTrue(lock_path.exists())
+
+        self.assertEqual(calls, [(fake_msvcrt.LK_LOCK, 1), (fake_msvcrt.LK_UNLCK, 1)])
+
+    def test_process_lock_warns_once_when_no_process_backend_is_available(self):
+        from antigravity_auth import storage
+
+        storage._process_lock_warning_emitted = False
+        original_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name in ("fcntl", "msvcrt"):
+                raise ImportError(f"no {name} in this test")
+            return original_import(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "store.lock"
+            with patch("builtins.__import__", side_effect=fake_import):
+                with self.assertLogs("antigravity_auth.storage", level="WARNING") as captured:
+                    with storage._process_file_lock(lock_path):
+                        pass
+                    with storage._process_file_lock(lock_path):
+                        pass
+
+        warnings = [line for line in captured.output if "Inter-process file locking is unavailable" in line]
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("account-store transactions are only thread-safe inside this process", warnings[0])
 
     def test_save_accounts_creates_private_process_lock_file(self):
         import stat

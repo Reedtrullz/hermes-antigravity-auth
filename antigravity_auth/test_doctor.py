@@ -65,3 +65,18 @@ class TestDoctor(unittest.TestCase):
         adapter_rows = [row for row in rows if row.check == "Hermes adapter import"]
         self.assertTrue(adapter_rows)
         self.assertEqual(adapter_rows[0].status, "FAIL")
+
+    def test_doctor_reports_retry_streaming_limitation(self):
+        from antigravity_auth.doctor import format_doctor_rows, run_doctor
+
+        output = format_doctor_rows(run_doctor())
+
+        self.assertIn("automatic retry", output)
+        self.assertIn("streaming responses cannot be replayed", output)
+
+    def test_doctor_reports_process_lock_backend(self):
+        from antigravity_auth.doctor import format_doctor_rows, run_doctor
+
+        output = format_doctor_rows(run_doctor())
+
+        self.assertIn("account store locking", output)

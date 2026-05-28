@@ -47,6 +47,11 @@ future, use the same credential, plugin-install, and authentication steps below.
 pip install "hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
 ```
 
+The `[yaml]` extra installs PyYAML. Keep it for normal Hermes use whenever you
+have `~/.hermes/config.yaml`; without PyYAML the plugin runs with defaults and
+`hermes antigravity doctor` reports a WARN explaining how to install YAML
+support.
+
 Or clone and install locally:
 
 ```bash
@@ -123,7 +128,8 @@ hermes antigravity doctor
 ```
 
 `doctor` prints PASS/WARN/FAIL checks for the plugin entrypoint, Hermes Cloud
-Code interceptor symbols, account/auth store permissions, config parsing,
+Code interceptor symbols, automatic retry status and streaming replay limits,
+account-store locking backend, account/auth store permissions, config parsing,
 model registry, and active-account token refresh. It redacts secrets in all
 output.
 
@@ -242,6 +248,10 @@ paths:
    account and retry the request once when the body is replayable. 403 and 429
    responses mark the selected account cooling down or rate-limited, then retry
    once with the next valid account when safe. A retry guard prevents loops;
+   the cloned retry request strips stale Authorization and Antigravity/fingerprint
+   headers so the request hook must repopulate them for the refreshed/rotated
+   account. Streaming responses cannot be replayed by httpx after the stream
+   starts, so automatic retry is limited to non-streaming replayable requests;
    skipped retries are logged with a reason. 5xx responses mark the endpoint
    failed for the internal endpoint helper.
 4. **Endpoint routing**: Current runtime requests use production
@@ -324,8 +334,11 @@ Supported strategy values are `sticky`, `hybrid`, and `round-robin`; supported
 scheduling modes are `cache_first`, `balance`, and `performance_first`.
 Percentage values are clamped to 0–100, retry/backoff intervals are clamped to
 sane positive bounds, and `soft_quota_cache_ttl_minutes` must be `auto` or a
-positive integer. If `~/.hermes/config.yaml` exists without PyYAML installed,
-`hermes antigravity doctor` reports a WARN with the install command.
+positive integer. Install with the `[yaml]` extra (`pip install
+"hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"`
+or `pip install -e ".[dev,yaml]"` from a checkout) when using config files. If
+`~/.hermes/config.yaml` exists without PyYAML installed, the doctor command
+reports a WARN with the install command.
 
 ### Basic Options
 
@@ -488,6 +501,12 @@ models do not use a preview suffix; Gemini 3.0 legacy models still do.
 **Endpoint fallback**: The code includes an endpoint helper and records 5xx
 failures, but current runtime selection still uses the production Cloud Code
 endpoint.
+
+**Streaming automatic retry**: The retry wrapper can replay bounded 401/403/429
+requests only when httpx still has a replayable body and the response is not
+being streamed. Streaming/SSE responses cannot be safely replayed after the
+stream starts, so doctor warns about this limitation; retry the user request
+manually if a streaming call fails after token refresh or account rotation.
 
 **Soft quota cache**: Account selection can honor cached quota state when it is
 already present, but the live quota check command currently displays quota

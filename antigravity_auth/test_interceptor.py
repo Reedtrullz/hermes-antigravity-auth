@@ -830,6 +830,36 @@ class TestRetryWrapper(unittest.TestCase):
         self.assertTrue(calls[1].extensions["antigravity_retry_attempted"])
         self.assertEqual(calls[1].extensions["antigravity_retry_original_status"], 401)
 
+    def test_send_wrapper_retry_does_not_reuse_stale_auth_or_fingerprint_headers(self):
+        from antigravity_auth.interceptor import _send_with_antigravity_retry
+
+        calls = []
+
+        def original_send(request, *args, **kwargs):
+            calls.append(request)
+            status = 401 if len(calls) == 1 else 200
+            return httpx.Response(status, request=request)
+
+        req = self._make_request()
+        req.extensions["antigravity_retry_ready"] = True
+        req.headers["Authorization"] = "Bearer stale-access-token"
+        req.headers["User-Agent"] = "stale-antigravity-ua"
+        req.headers["X-Goog-Api-Client"] = "stale-client"
+        req.headers["Client-Metadata"] = "stale-fingerprint"
+        req.headers["X-Antigravity-Device"] = "stale-device"
+
+        response = _send_with_antigravity_retry(original_send, req)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(calls), 2)
+        retry_headers = calls[1].headers
+        self.assertNotIn("authorization", retry_headers)
+        self.assertNotIn("user-agent", retry_headers)
+        self.assertNotIn("x-goog-api-client", retry_headers)
+        self.assertNotIn("client-metadata", retry_headers)
+        self.assertNotIn("x-antigravity-device", retry_headers)
+        self.assertEqual(retry_headers.get("content-type"), "application/json")
+
     def test_send_wrapper_does_not_retry_without_successful_recovery_marker(self):
         from antigravity_auth.interceptor import _send_with_antigravity_retry
 
