@@ -10,7 +10,7 @@ transform/
 ├── thinking.py    # Claude thinking block stripping + signature handling
 ├── schema.py      # JSON schema allowlist sanitization (const, $ref removal)
 ├── envelope.py    # Antigravity request envelope + header building
-├── response.py    # SSE streaming response → chat-completions format
+├── response.py    # Response utility: usage extraction, error rewrites, non-stream response unwrap; streaming SSE is passed through
 ├── test_*.py      # Colocated tests per module
 └── __init__.py    # Explicit exports of all public API symbols
 ```
@@ -21,7 +21,7 @@ transform/
 - **Two header styles**: `HeaderStyle.ANTIGRAVITY` (Electron UA+fingerprint) vs `HeaderStyle.GEMINI_CLI` (nodejs-client UA)
 - **Schema sanitization**: Allowlist-based — removes `const`, `$ref`, `$defs`, `title`, `$schema`; merges `allOf`/`anyOf`/`oneOf`
 - **Thinking block stripping**: Both Claude anthropic thinking blocks AND Gemini thought signatures — stripped from outgoing requests
-- **SSE parsing**: `transform_antigravity_response()` converts Antigravity SSE stream to OpenAI chat-completions format
+- **SSE passthrough**: `transform_antigravity_response()` preserves streaming SSE bodies unchanged while extracting usage headers when present
 
 ## Anti-Patterns
 

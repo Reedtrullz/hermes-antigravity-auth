@@ -202,7 +202,7 @@ The transform package contains the Python equivalents for request/response adapt
 | `transform/thinking.py` | Claude/Gemini thinking block filtering and signature helpers | Used by `_apply_claude_transforms()` for Claude request hardening |
 | `transform/schema.py` | JSON Schema allowlist sanitization helpers | Utility/test coverage; the current wrapper patch only adds Claude placeholder required fields |
 | `transform/envelope.py` | Model-name mapping, header randomization, direct Antigravity envelope helpers | Header/model helpers are used by the httpx hook; direct envelope helpers are used by tools/tests |
-| `transform/response.py` | SSE streaming response parsing + preview access error rewriting | Utility/test coverage for direct Antigravity response adaptation |
+| `transform/response.py` | Usage extraction, error rewriting, and non-stream response unwrap; streaming SSE is passed through unchanged | Utility/test coverage for direct Antigravity response adaptation; current runtime uses native Hermes Cloud Code stream parsing |
 
 These modules are covered by unit tests, but they are not all on the same
 runtime path. The current Hermes Cloud Code path uses the wrapper patch for

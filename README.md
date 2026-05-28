@@ -513,7 +513,7 @@ hermes-antigravity-auth/
 │       ├── thinking.py      # Claude thinking block stripping
 │       ├── schema.py        # JSON schema sanitization
 │       ├── envelope.py      # Antigravity request wrapping + headers
-│       └── response.py      # SSE streaming response parsing
+│       └── response.py      # Usage extraction, error rewrites, SSE passthrough
 ├── docs/                    # Documentation
 │   ├── ARCHITECTURE.md      # Architecture guide
 │   └── ANTIGRAVITY_API_SPEC.md  # API reference

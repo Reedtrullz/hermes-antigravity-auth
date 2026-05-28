@@ -33,7 +33,7 @@ antigravity_auth/
     ├── thinking.py       # Claude thinking block stripping + signature handling
     ├── schema.py         # JSON schema allowlist sanitization
     ├── envelope.py       # Antigravity request envelope + header building
-    └── response.py       # SSE streaming response → chat-completions format
+    └── response.py       # Usage extraction, error rewrites, non-stream unwrap; streaming SSE passthrough
 ```
 
 ## Key Patterns

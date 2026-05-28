@@ -1,4 +1,8 @@
-"""SSE streaming response parsing, usage extraction, and error rewriting."""
+"""Response utility: usage extraction, error rewriting, and non-stream unwrap.
+
+Streaming SSE payloads are intentionally passed through unchanged; this module
+only extracts usage metadata from them for response headers.
+"""
 from __future__ import annotations
 
 import json
@@ -291,6 +295,9 @@ def transform_antigravity_response(
   extra_headers_dict: dict[str, str] = {}
 
   if streaming and is_sse:
+    # Contract: do not convert Antigravity SSE events to OpenAI chunks here.
+    # Hermes Cloud Code runtime parses native streams; this utility only surfaces
+    # usage metadata as headers while preserving the original SSE body.
     usage = _extract_usage_from_sse_payload(body)
     return (body, _build_usage_headers(usage, extra_headers_dict), None)
 
