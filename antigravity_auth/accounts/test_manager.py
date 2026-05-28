@@ -5,6 +5,7 @@ import os
 import unittest
 from unittest import mock
 from pathlib import Path
+from typing import Any
 
 from antigravity_auth.accounts.manager import AccountManager
 
@@ -123,6 +124,65 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         manager = self._make_manager(data)
         self.assertEqual(manager.get_account_count(), 0)
         self.assertIsNone(manager.get_current_account_for_family("gemini"))
+
+    def test_get_account_by_index_returns_enabled_account(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a"},
+                {"email": "bob@example.com", "refreshToken": "refresh-bob", "projectId": "proj-b"},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        first_account = manager.get_account_by_index(0)
+        self.assertIsNotNone(first_account)
+        assert first_account is not None
+        self.assertEqual(first_account.email, "alice@example.com")
+
+        second_account = manager.get_account_by_index(1)
+        self.assertIsNotNone(second_account)
+        assert second_account is not None
+        self.assertEqual(second_account.email, "bob@example.com")
+
+    def test_get_account_by_index_rejects_out_of_range_and_disabled(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                    "enabled": False,
+                },
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        self.assertIsNone(manager.get_account_by_index(-1))
+        self.assertIsNone(manager.get_account_by_index(999))
+        self.assertIsNone(manager.get_account_by_index(0))
+
+    def test_get_account_by_index_rejects_non_integer_inputs(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a"},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+
+        invalid_indices: tuple[Any, ...] = (True, False, "0", 0.0, None)
+        for index in invalid_indices:
+            with self.subTest(index=index):
+                self.assertIsNone(manager.get_account_by_index(index))
 
     def test_sticky_returns_current(self) -> None:
         """Sticky strategy returns the current account when not rate-limited."""
@@ -456,7 +516,9 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
             "activeIndexByFamily": {"claude": 0, "gemini": 0},
         }
         manager = self._make_manager(data)
-        manager.set_account_enabled(0, False)
+        with mock.patch.object(manager, "_request_save_to_disk") as request_save:
+            manager.set_account_enabled(0, False)
+            request_save.assert_called_once()
         self.assertEqual(manager.get_account_count(), 0)
 
     def test_accounts_snapshot(self) -> None:

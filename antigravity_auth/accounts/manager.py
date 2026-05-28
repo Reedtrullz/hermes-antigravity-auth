@@ -179,6 +179,15 @@ class AccountManager:
         return account
     return None
 
+  def get_account_by_index(self, account_index: int) -> ManagedAccount | None:
+    if not isinstance(account_index, int) or isinstance(account_index, bool):
+      return None
+    if 0 <= account_index < len(self._accounts):
+      account = self._accounts[account_index]
+      if account.enabled is not False:
+        return account
+    return None
+
   def get_accounts(self) -> list[ManagedAccount]:
     return list(self._accounts)
 
