@@ -374,7 +374,14 @@ class TestResponseHook(unittest.TestCase):
             os.environ.pop("HERMES_HOME", None)
         self.temp_dir.cleanup()
 
-    def _make_response(self, model="gemini-3.1-pro-high", status=429, header_style="antigravity"):
+    def _make_response(
+        self,
+        model="gemini-3.1-pro-high",
+        status=429,
+        header_style="antigravity",
+        json_body=None,
+        stream_body=False,
+    ):
         body = {"project": "proj", "model": model, "request": {"contents": []}}
         req = httpx.Request(
             "POST",
@@ -384,7 +391,16 @@ class TestResponseHook(unittest.TestCase):
         req.read()
         req.extensions["antigravity_header_style"] = header_style
         req.extensions["antigravity_model_family"] = "claude" if "claude" in model else "gemini"
-        return httpx.Response(status, request=req, headers={"Retry-After": "3"})
+        if stream_body and json_body is not None:
+            body_bytes = json.dumps(json_body).encode("utf-8")
+            return httpx.Response(
+                status,
+                request=req,
+                headers={"Retry-After": "3", "Content-Type": "application/json"},
+                stream=httpx.ByteStream(body_bytes),
+            )
+        response_kwargs = {"json": json_body} if json_body is not None else {}
+        return httpx.Response(status, request=req, headers={"Retry-After": "3"}, **response_kwargs)
 
     def test_429_for_claude_marks_claude_family(self):
         from antigravity_auth.interceptor import _antigravity_response_hook
@@ -490,6 +506,90 @@ class TestResponseHook(unittest.TestCase):
             _antigravity_response_hook(response)
 
         self.assertEqual(marked, [0])
+
+    def test_429_uses_reason_aware_backoff(self):
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            index = 0
+
+        class FakeManager:
+            def __init__(self):
+                self.account = FakeAccount()
+                self.reason_call = None
+
+            def get_account_by_index(self, index):
+                return self.account
+
+            def get_current_account_for_family(self, family):
+                return self.account
+
+            def mark_rate_limited_with_reason(
+                self,
+                account,
+                family,
+                header_style,
+                model,
+                reason,
+                retry_after_ms=None,
+                failure_ttl_ms=3600_000,
+            ):
+                self.reason_call = {
+                    "account_index": account.index,
+                    "family": family,
+                    "header_style": header_style,
+                    "model": model,
+                    "reason": reason,
+                    "retry_after_ms": retry_after_ms,
+                }
+                return 3957.0
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                return self.account
+
+            def save_to_disk(self):
+                return True
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": False,
+            "account_selection_strategy": "sticky",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 100,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+        })()
+        mgr = FakeManager()
+        body = {
+            "error": {
+                "code": 429,
+                "message": "You have exhausted your capacity on this model. Your quota will reset after 3s.",
+                "status": "RESOURCE_EXHAUSTED",
+                "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "3.957525076s"}],
+            }
+        }
+        response = self._make_response(
+            model="claude-sonnet-4-6",
+            status=429,
+            header_style="antigravity",
+            json_body=body,
+            stream_body=True,
+        )
+        response.request.extensions["antigravity_selected_account_index"] = 0
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertIsNotNone(mgr.reason_call)
+        assert mgr.reason_call is not None
+        self.assertEqual(mgr.reason_call["account_index"], 0)
+        self.assertEqual(mgr.reason_call["reason"], "MODEL_CAPACITY_EXHAUSTED")
+        self.assertAlmostEqual(mgr.reason_call["retry_after_ms"], 3957.0, places=3)
 
     def test_429_marks_only_actual_header_style(self):
         from antigravity_auth.interceptor import _antigravity_response_hook

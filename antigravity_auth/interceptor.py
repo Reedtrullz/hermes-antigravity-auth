@@ -541,16 +541,58 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
         try:
             from .accounts.manager import get_or_create_global_manager
             from .accounts.quota import compute_soft_quota_cache_ttl_ms
-            from .accounts.ratelimit import mark_rate_limited
+            from .accounts.ratelimit import mark_rate_limited, parse_rate_limit_reason
+            from .transform.response import extract_retry_info
             mgr = get_or_create_global_manager()
             active = _response_account_for_request(mgr, request_extensions, family)
             if active:
-                retry = config.default_retry_after_seconds
+                retry_after_ms = float(config.default_retry_after_seconds * 1000)
                 rh = response.headers.get("Retry-After") or response.headers.get("retry-after")
                 if rh:
-                    try: retry = int(rh)
-                    except ValueError: pass
-                mark_rate_limited(active, float(retry * 1000), family, header_style, model)
+                    try:
+                        retry_after_ms = float(rh) * 1000
+                    except ValueError:
+                        pass
+
+                message = None
+                raw_reason = None
+                try:
+                    try:
+                        parsed_body = response.json()
+                    except httpx.ResponseNotRead:
+                        response.read()
+                        parsed_body = response.json()
+                    if isinstance(parsed_body, dict):
+                        retry_info = extract_retry_info(parsed_body)
+                        if isinstance(retry_info, dict):
+                            retry_delay_ms = retry_info.get("retryDelayMs")
+                            if isinstance(retry_delay_ms, (int, float)) and retry_delay_ms > 0:
+                                retry_after_ms = float(retry_delay_ms)
+
+                        error = parsed_body.get("error")
+                        if isinstance(error, dict):
+                            error_message = error.get("message")
+                            if isinstance(error_message, str):
+                                message = error_message
+                            error_status = error.get("status")
+                            if isinstance(error_status, str):
+                                raw_reason = error_status
+                except Exception as e:
+                    logger.debug("Unable to parse 429 response body for rate-limit reason: %s", e)
+
+                parsed_reason = parse_rate_limit_reason(raw_reason, message, response.status_code)
+                mark_with_reason = getattr(mgr, "mark_rate_limited_with_reason", None)
+                if callable(mark_with_reason):
+                    mark_with_reason(
+                        active,
+                        family,
+                        header_style,
+                        model,
+                        parsed_reason,
+                        retry_after_ms=retry_after_ms,
+                    )
+                else:
+                    mark_rate_limited(active, retry_after_ms, family, header_style, model)
                 mgr.save_to_disk()
                 soft_quota_cache_ttl_ms = compute_soft_quota_cache_ttl_ms(
                     config.soft_quota_cache_ttl_minutes,
