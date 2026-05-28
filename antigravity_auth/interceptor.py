@@ -46,6 +46,18 @@ def _request_model_from_response(response: httpx.Response) -> str:
   return ""
 
 
+def _response_account_for_request(mgr: Any, request_extensions: dict, family: str) -> Any:
+  selected_idx = request_extensions.get("antigravity_selected_account_index")
+  if isinstance(selected_idx, int) and not isinstance(selected_idx, bool):
+    try:
+      selected = mgr.get_account_by_index(selected_idx)
+    except AttributeError:
+      selected = None
+    if selected is not None:
+      return selected
+  return mgr.get_current_account_for_family(family)
+
+
 def _packed_refresh_for_account(account: Any) -> str:
   from .token import format_refresh_parts
   parts = account.refresh_parts
@@ -483,7 +495,7 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
             from .accounts.manager import get_or_create_global_manager
             from .accounts.quota import compute_soft_quota_cache_ttl_ms
             mgr = get_or_create_global_manager()
-            active = mgr.get_current_account_for_family(family)
+            active = _response_account_for_request(mgr, request_extensions, family)
             if active:
                 import time
                 active.cooling_down_until = (time.time() + 86400) * 1000
@@ -531,7 +543,7 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
             from .accounts.quota import compute_soft_quota_cache_ttl_ms
             from .accounts.ratelimit import mark_rate_limited
             mgr = get_or_create_global_manager()
-            active = mgr.get_current_account_for_family(family)
+            active = _response_account_for_request(mgr, request_extensions, family)
             if active:
                 retry = config.default_retry_after_seconds
                 rh = response.headers.get("Retry-After") or response.headers.get("retry-after")

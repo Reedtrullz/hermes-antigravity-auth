@@ -435,6 +435,62 @@ class TestResponseHook(unittest.TestCase):
         self.assertEqual(mgr.current_family, "claude")
         self.assertEqual(calls, [("claude", "antigravity", "claude-sonnet-4-6-thinking")])
 
+    def test_429_marks_selected_account_not_current_account(self):
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            def __init__(self, index):
+                self.index = index
+                self.rate_limit_reset_times = type("RateLimits", (), {})()
+
+        class FakeManager:
+            def __init__(self):
+                self.current = FakeAccount(1)
+                self.selected = FakeAccount(0)
+
+            def get_current_account_for_family(self, family):
+                return self.current
+
+            def get_account_by_index(self, index):
+                return self.selected if index == 0 else None
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                return self.selected
+
+            def save_to_disk(self):
+                return True
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": False,
+            "account_selection_strategy": "sticky",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 100,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+        })()
+        mgr = FakeManager()
+        marked = []
+        response = self._make_response(
+            model="claude-sonnet-4-6",
+            status=429,
+            header_style="antigravity",
+        )
+        response.request.extensions["antigravity_selected_account_index"] = 0
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ), patch(
+            "antigravity_auth.accounts.ratelimit.mark_rate_limited",
+            side_effect=lambda account, *args: marked.append(account.index),
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertEqual(marked, [0])
+
     def test_429_marks_only_actual_header_style(self):
         from antigravity_auth.interceptor import _antigravity_response_hook
 
@@ -600,6 +656,69 @@ class TestResponseHook(unittest.TestCase):
             "soft_quota_threshold_percent": 77,
             "soft_quota_cache_ttl_ms": compute_soft_quota_cache_ttl_ms(5, 15),
         })
+
+    def test_403_cools_selected_account_not_current_account(self):
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeAccount:
+            def __init__(self, index):
+                self.index = index
+                self.cooling_down_until = None
+                self.cooldown_reason = None
+                self.refresh_parts = type("RefreshParts", (), {
+                    "refresh_token": "r",
+                    "project_id": "p",
+                    "managed_project_id": "m",
+                })()
+                self.email = "user@example.com"
+
+        class FakeManager:
+            def __init__(self):
+                self.current = FakeAccount(1)
+                self.selected = FakeAccount(0)
+
+            def get_current_account_for_family(self, family):
+                return self.current
+
+            def get_account_by_index(self, index):
+                return self.selected if index == 0 else None
+
+            def get_current_or_next_for_family(self, family, **kwargs):
+                return self.selected
+
+            def save_to_disk(self):
+                return True
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": False,
+            "account_selection_strategy": "sticky",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 100,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+        })()
+        mgr = FakeManager()
+        response = self._make_response(
+            model="claude-sonnet-4-6",
+            status=403,
+            header_style="antigravity",
+        )
+        response.request.extensions["antigravity_selected_account_index"] = 0
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ), patch(
+            "antigravity_auth.token.refresh_access_token",
+            return_value={},
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertEqual(mgr.selected.cooldown_reason, "auth-failure")
+        self.assertIsNone(mgr.current.cooldown_reason)
 
     def test_401_syncs_rotated_refresh_token_to_all_auth_stores(self):
         from antigravity_auth.interceptor import _antigravity_response_hook
