@@ -537,6 +537,12 @@ pip install -e ".[dev,yaml]"
 python3 -m pytest antigravity_auth/ -v
 ```
 
+CI runs the same package tests on Python 3.10, 3.11, 3.12, and 3.13, plus a
+clean source-archive install/build smoke that verifies built artifacts do not
+contain `antigravity_auth/_credentials.py`. The workflow uses Node 24-capable
+first-party actions (`actions/checkout@v6` and `actions/setup-python@v6`) to
+avoid GitHub's Node 20 JavaScript action deprecation path.
+
 ---
 
 ## License

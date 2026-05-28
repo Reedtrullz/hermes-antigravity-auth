@@ -2,6 +2,30 @@
 
 All notable changes to hermes-antigravity-auth.
 
+## [Unreleased] — 2026-05-28
+
+### Added
+- Package build guard rejects local `antigravity_auth/_credentials.py` so wheels/sdists cannot accidentally include private OAuth client credentials.
+- Safe OAuth credential resolver supports environment variables and external `~/.hermes/antigravity-credentials.json` without relying on package-tree secrets.
+- Account-manager helper resolves the request-selected account by safe index for response-hook bookkeeping.
+- Process file locks serialize account-store writes and `auth.json` read-modify-write updates across Hermes processes.
+
+### Changed
+- GitHub Actions CI now uses Node 24-capable `actions/checkout@v6` and `actions/setup-python@v6`.
+- Response hooks apply 403/429 handling to the request-selected account rather than whichever account is current later.
+- 429 handling uses reason-aware backoff data from Cloud Code error responses.
+- Runtime request headers reuse stored per-account Antigravity fingerprints instead of generating random selected-account fallback headers.
+- Provider wrapper installs the interceptor best-effort/idempotently.
+- Streaming SSE behavior is documented and tested as passthrough for Hermes' native Cloud Code parser.
+
+### Fixed
+- Request authorization now fails closed when account selection cannot provide a token, preventing stale bearer reuse.
+- Managed runtime refreshes persist `invalid_grant` cleanup and avoid resurrecting revoked accounts from stale managers.
+- Anthropic-style content-array `tool_use` / `tool_result` IDs are preserved during message transforms.
+- Nullable JSON Schema fields no longer get removed from `required` solely because they allow `null`.
+- Debug logs are written with private permissions and redact additional token/key shapes.
+- Existing YAML config files now warn visibly when PyYAML is unavailable.
+
 ## [1.6.0] — 2026-05-21
 
 ### Added
