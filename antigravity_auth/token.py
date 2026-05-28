@@ -61,6 +61,156 @@ def format_refresh_parts(parts: dict) -> str:
     return base
 
 
+def _coerce_storage_index(value, default: int = 0) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return default
+    return value
+
+
+def _clamp_storage_index(value: int, account_count: int) -> int:
+    if account_count <= 0:
+        return 0
+    return max(0, min(value, account_count - 1))
+
+
+def _adjust_storage_indexes_after_account_removal(accounts_data: dict, removed_index: int) -> None:
+    accounts = accounts_data.get("accounts", [])
+    if not isinstance(accounts, list):
+        accounts = []
+        accounts_data["accounts"] = accounts
+
+    account_count = len(accounts)
+
+    active_idx = _coerce_storage_index(accounts_data.get("activeIndex"), 0)
+    if account_count == 0:
+        active_idx = 0
+    else:
+        if active_idx > removed_index:
+            active_idx -= 1
+        elif active_idx == removed_index:
+            active_idx = min(removed_index, account_count - 1)
+        active_idx = _clamp_storage_index(active_idx, account_count)
+    accounts_data["activeIndex"] = active_idx
+
+    family_map = accounts_data.get("activeIndexByFamily")
+    if not isinstance(family_map, dict):
+        family_map = {}
+    if account_count == 0:
+        accounts_data["activeIndexByFamily"] = {"claude": 0, "gemini": 0}
+    else:
+        adjusted_family_map = {}
+        for family in ("claude", "gemini"):
+            family_idx = _coerce_storage_index(family_map.get(family), active_idx)
+            if family_idx > removed_index:
+                family_idx -= 1
+            elif family_idx == removed_index:
+                family_idx = active_idx
+            adjusted_family_map[family] = _clamp_storage_index(family_idx, account_count)
+        accounts_data["activeIndexByFamily"] = adjusted_family_map
+
+    cursor = _coerce_storage_index(accounts_data.get("cursor"), active_idx)
+    if account_count == 0:
+        cursor = 0
+    else:
+        if cursor > removed_index:
+            cursor -= 1
+        cursor = cursor % account_count
+    accounts_data["cursor"] = cursor
+
+
+def _sync_token_to_all_auth_stores_best_effort(
+    access_token: str,
+    refresh_token: str,
+    project_id: str = "",
+    email: str | None = None,
+    expires_ms: int | None = None,
+    set_active: bool = True,
+) -> None:
+    try:
+        try:
+            from .auth_sync import sync_token_to_all_auth_stores
+        except ImportError:
+            from auth_sync import sync_token_to_all_auth_stores
+
+        sync_token_to_all_auth_stores(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            project_id=project_id,
+            email=email,
+            expires_ms=expires_ms,
+            set_active=set_active,
+        )
+    except Exception:
+        try:
+            sync_token_to_auth_json(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                project_id=project_id,
+                email=email,
+                set_active=set_active,
+            )
+        except Exception:
+            pass
+
+
+def _packed_refresh_for_account(account: dict) -> str:
+    return format_refresh_parts({
+        "refreshToken": account.get("refreshToken", ""),
+        "projectId": account.get("projectId") or "",
+        "managedProjectId": account.get("managedProjectId") or "",
+    })
+
+
+def _remove_invalid_grant_account_and_sync_auth(raw_refresh_token: str) -> None:
+    accounts_data = load_accounts()
+    accounts = accounts_data.get("accounts", [])
+    if not isinstance(accounts, list):
+        return
+
+    removed_any = False
+    idx = 0
+    while idx < len(accounts):
+        account = accounts[idx]
+        if isinstance(account, dict) and account.get("refreshToken") == raw_refresh_token:
+            accounts.pop(idx)
+            accounts_data["accounts"] = accounts
+            _adjust_storage_indexes_after_account_removal(accounts_data, idx)
+            removed_any = True
+            continue
+        idx += 1
+
+    if not removed_any:
+        return
+
+    save_accounts(accounts_data)
+
+    if accounts:
+        active_idx = _clamp_storage_index(
+            _coerce_storage_index(accounts_data.get("activeIndex"), 0),
+            len(accounts),
+        )
+        active_account = accounts[active_idx]
+        if not isinstance(active_account, dict):
+            return
+        packed_refresh = _packed_refresh_for_account(active_account)
+        _sync_token_to_all_auth_stores_best_effort(
+            access_token="",
+            refresh_token=packed_refresh,
+            project_id=active_account.get("projectId") or "",
+            email=active_account.get("email"),
+            expires_ms=None,
+            set_active=True,
+        )
+    else:
+        _sync_token_to_all_auth_stores_best_effort(
+            "",
+            "",
+            project_id="",
+            email=None,
+            set_active=False,
+        )
+
+
 def is_access_token_expired(auth: dict) -> bool:
     if not auth or "access" not in auth or not auth.get("access"):
         return True
@@ -157,22 +307,9 @@ def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool 
         base_message = f"Antigravity token refresh failed ({status} {status_text})"
         message = f"{base_message} - {details_str}" if details_str else base_message
         
-        if code == "invalid_grant":
-            if persist:
-                try:
-                    sync_token_to_auth_json("", "", project_id="", set_active=False)
-                except Exception:
-                    pass
-
+        if code == "invalid_grant" and persist:
             try:
-                accounts_data = load_accounts()
-                original_len = len(accounts_data.get("accounts", []))
-                accounts_data["accounts"] = [
-                    acc for acc in accounts_data.get("accounts", [])
-                    if acc.get("refreshToken") != parts["refreshToken"]
-                ]
-                if len(accounts_data["accounts"]) != original_len:
-                    save_accounts(accounts_data)
+                _remove_invalid_grant_account_and_sync_auth(parts.get("refreshToken") or "")
             except Exception:
                 pass
                 

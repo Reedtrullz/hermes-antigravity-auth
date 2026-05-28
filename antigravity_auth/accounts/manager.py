@@ -13,7 +13,6 @@ from ..storage import get_accounts_json_path
 from .ratelimit import (
     clear_expired_rate_limits,
     get_quota_key,
-    is_rate_limited_for_family,
     is_rate_limited_for_header_style,
     is_account_cooling_down,
     mark_rate_limited,
@@ -226,8 +225,8 @@ class AccountManager:
     current = self.get_current_account_for_family(family)
     if current:
       clear_expired_rate_limits(current.rate_limit_reset_times)
-      is_limited = is_rate_limited_for_family(
-        current.rate_limit_reset_times, family, model
+      is_limited = is_rate_limited_for_header_style(
+        current.rate_limit_reset_times, family, header_style, model
       )
       is_over = self._is_over_soft_quota(
         current, family, soft_quota_threshold_percent, soft_quota_cache_ttl_ms, model
@@ -257,7 +256,7 @@ class AccountManager:
     available = [
       a for a in self._accounts
       if a.enabled is not False
-      and not is_rate_limited_for_family(a.rate_limit_reset_times, family, model)
+      and not is_rate_limited_for_header_style(a.rate_limit_reset_times, family, header_style, model)
       and not self._is_over_soft_quota(a, family, soft_quota_threshold_percent,
                                         soft_quota_cache_ttl_ms, model)
       and not is_account_cooling_down(a)
@@ -292,7 +291,7 @@ class AccountManager:
     candidates = [
       a for a in self._accounts
       if a.enabled is not False
-      and not is_rate_limited_for_family(a.rate_limit_reset_times, family, model)
+      and not is_rate_limited_for_header_style(a.rate_limit_reset_times, family, header_style, model)
       and not self._is_over_quota_simple(a, family, soft_quota_threshold_percent,
                                           soft_quota_cache_ttl_ms, model)
       and not is_account_cooling_down(a)

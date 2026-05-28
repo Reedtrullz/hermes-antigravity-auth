@@ -142,6 +142,7 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         manager = self._make_manager(data)
         result = manager.get_current_or_next_for_family("gemini", strategy="sticky")
         self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result.email, "alice@example.com")
 
     def test_skips_rate_limited(self) -> None:
@@ -172,6 +173,149 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         manager = self._make_manager(data)
         result = manager.get_current_or_next_for_family("gemini", strategy="sticky")
         self.assertIsNotNone(result, "Expected a non-rate-limited account to be selected")
+        assert result is not None
+        self.assertEqual(result.email, "bob@example.com")
+
+    def test_sticky_skips_gemini_antigravity_model_limited_current_account(self) -> None:
+        """Sticky Gemini selection honors the concrete Antigravity header-style pool."""
+        now_ms = time.time() * 1000
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                    "rateLimitResetTimes": {
+                        "gemini-antigravity:gemini-3.1-pro-high": now_ms + 60000,
+                    },
+                },
+                {
+                    "email": "bob@example.com",
+                    "refreshToken": "refresh-bob",
+                    "projectId": "proj-b",
+                },
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        result = manager.get_current_or_next_for_family(
+            "gemini",
+            model="gemini-3.1-pro-high",
+            strategy="sticky",
+            header_style="antigravity",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "bob@example.com")
+
+    def test_sticky_gemini_cli_can_use_account_limited_only_for_antigravity(self) -> None:
+        """Gemini CLI selection remains independent from the Antigravity quota pool."""
+        now_ms = time.time() * 1000
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                    "rateLimitResetTimes": {
+                        "gemini-antigravity:gemini-3.1-pro-high": now_ms + 60000,
+                    },
+                },
+                {
+                    "email": "bob@example.com",
+                    "refreshToken": "refresh-bob",
+                    "projectId": "proj-b",
+                },
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        result = manager.get_current_or_next_for_family(
+            "gemini",
+            model="gemini-3.1-pro-high",
+            strategy="sticky",
+            header_style="gemini-cli",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "alice@example.com")
+
+    def test_round_robin_skips_gemini_antigravity_model_limited_candidate(self) -> None:
+        """Round-robin Gemini candidate filtering uses the concrete header-style pool."""
+        now_ms = time.time() * 1000
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                    "rateLimitResetTimes": {
+                        "gemini-antigravity:gemini-3.1-pro-high": now_ms + 60000,
+                    },
+                },
+                {
+                    "email": "bob@example.com",
+                    "refreshToken": "refresh-bob",
+                    "projectId": "proj-b",
+                },
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        result = manager.get_current_or_next_for_family(
+            "gemini",
+            model="gemini-3.1-pro-high",
+            strategy="round-robin",
+            header_style="antigravity",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "bob@example.com")
+
+    def test_hybrid_skips_gemini_antigravity_model_limited_candidate(self) -> None:
+        """Hybrid Gemini candidate filtering uses the concrete header-style pool."""
+        now_ms = time.time() * 1000
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                    "lastUsed": 0,
+                    "rateLimitResetTimes": {
+                        "gemini-antigravity:gemini-3.1-pro-high": now_ms + 60000,
+                    },
+                },
+                {
+                    "email": "bob@example.com",
+                    "refreshToken": "refresh-bob",
+                    "projectId": "proj-b",
+                    "lastUsed": 100,
+                },
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        result = manager.get_current_or_next_for_family(
+            "gemini",
+            model="gemini-3.1-pro-high",
+            strategy="hybrid",
+            header_style="antigravity",
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result.email, "bob@example.com")
 
     def test_multiple_accounts(self) -> None:
@@ -361,4 +505,5 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         manager = self._make_manager(data)
         result = manager.get_current_or_next_for_family("gemini", strategy="sticky")
         self.assertIsNotNone(result, "Expected a non-cooling-down account to be selected")
+        assert result is not None
         self.assertEqual(result.email, "bob@example.com")
