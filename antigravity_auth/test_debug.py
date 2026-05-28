@@ -137,6 +137,33 @@ class TestInitializeDebug(unittest.TestCase):
             content = f.read()
         self.assertIn("[antigravity.test-module] info: test message", content)
 
+    def test_debug_log_file_is_private(self):
+        import os
+        import stat
+        import tempfile
+        from antigravity_auth.debug import initialize_debug, get_log_file_path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_umask = os.umask(0o022)
+            try:
+                initialize_debug(True, log_dir=tmp)
+            finally:
+                os.umask(old_umask)
+            path = get_log_file_path()
+            self.assertIsNotNone(path)
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+
+class TestSanitizeBody(unittest.TestCase):
+    def test_sanitize_body_redacts_camel_case_and_bearer(self):
+        from antigravity_auth.debug import _sanitize_body
+
+        body = '{"accessToken":"abc","refreshToken":"def","authorization":"Bearer xyz"}'
+        sanitized = _sanitize_body(body)
+        self.assertNotIn("abc", sanitized)
+        self.assertNotIn("def", sanitized)
+        self.assertNotIn("Bearer xyz", sanitized)
+
 
 if __name__ == "__main__":
     unittest.main()

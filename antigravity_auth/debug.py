@@ -83,7 +83,15 @@ def _get_logs_dir(log_dir: str | None = None) -> Path:
   else:
     logs_dir = get_hermes_home() / "logs" / "antigravity"
   logs_dir.mkdir(parents=True, exist_ok=True)
+  try:
+    os.chmod(logs_dir, 0o700)
+  except Exception:
+    pass
   return logs_dir
+
+
+def _private_log_opener(path: str, flags: int) -> int:
+  return os.open(path, flags, 0o600)
 
 
 def _create_log_file_path(log_dir: str | None = None) -> str:
@@ -123,7 +131,11 @@ def _create_log_writer(file_path: str | None = None) -> Callable[[str], None]:
     return lambda line: None
 
   try:
-    f = open(file_path, "a", encoding="utf-8")
+    f = open(file_path, "a", encoding="utf-8", opener=_private_log_opener)
+    try:
+      os.chmod(file_path, 0o600)
+    except Exception:
+      pass
     f.reconfigure = lambda: None
     _lock = threading.Lock()
 
@@ -181,10 +193,18 @@ def _mask_headers(headers: dict) -> dict:
 
 
 def _sanitize_body(body: str) -> str:
-  """Redact access_token/refresh_token/id_token values from debug log bodies."""
-  body = re.sub(r'"access_token"\s*:\s*"[^"]+"', '"access_token":"[REDACTED]"', body)
-  body = re.sub(r'"refresh_token"\s*:\s*"[^"]+"', '"refresh_token":"[REDACTED]"', body)
-  body = re.sub(r'"id_token"\s*:\s*"[^"]+"', '"id_token":"[REDACTED]"', body)
+  """Redact token values from debug log bodies."""
+  redactions = (
+    ("access_token", "***"),
+    ("refresh_token", "***"),
+    ("id_token", "[REDACTED]"),
+    ("accessToken", "[REDACTED]"),
+    ("refreshToken", "[REDACTED]"),
+    ("idToken", "[REDACTED]"),
+  )
+  for key, replacement in redactions:
+    body = re.sub(rf'"{key}"\s*:\s*"[^"]+"', f'"{key}":"{replacement}"', body)
+  body = re.sub(r'Bearer\s+[A-Za-z0-9._~+/=-]+', 'Bearer [REDACTED]', body)
   return body
 
 
