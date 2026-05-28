@@ -69,6 +69,34 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(loaded["accounts"][0]["email"], "test@example.com")
         self.assertEqual(loaded["accounts"][0]["refreshToken"], "refresh_123")
 
+    def test_process_lock_creates_private_lock_file_and_can_reacquire(self):
+        import os
+        import stat
+        import tempfile
+        from pathlib import Path
+        from antigravity_auth.storage import _process_file_lock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            lock_path = Path(tmp) / "store.lock"
+            with _process_file_lock(lock_path):
+                self.assertTrue(lock_path.exists())
+                self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+            with _process_file_lock(lock_path):
+                self.assertTrue(lock_path.exists())
+                self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+
+    def test_save_accounts_creates_private_process_lock_file(self):
+        import stat
+
+        save_accounts({"version": 4, "accounts": []})
+        lock_path = get_accounts_json_path().with_suffix(".lock")
+        self.assertTrue(lock_path.exists())
+        self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+
+        save_accounts({"version": 4, "accounts": [], "activeIndex": 0})
+        self.assertTrue(lock_path.exists())
+        self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+
     def test_save_accounts_temp_file_is_private_before_replace(self):
         observed_modes = []
         original_replace = os.replace
@@ -112,6 +140,46 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(active_updated["access_token"], "acc_updated")
         self.assertEqual(active_updated["refresh_token"], "ref_updated")
         self.assertEqual(active_updated["project_id"], "proj_updated")
+
+    def test_sync_token_to_auth_json_creates_private_lock_and_preserves_unrelated_providers(self):
+        import stat
+
+        auth_path = get_auth_json_path()
+        auth_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(auth_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "providers": {
+                        "other": {
+                            "tokens": {"access_token": "keep_access"},
+                            "project_id": "keep_project",
+                        }
+                    },
+                    "active_provider": "other",
+                },
+                f,
+            )
+
+        sync_token_to_auth_json(
+            access_token="acc_111",
+            refresh_token="ref_222",
+            project_id="proj_333",
+            email="user@example.com",
+            set_active=False,
+        )
+
+        lock_path = auth_path.with_suffix(".lock")
+        self.assertTrue(lock_path.exists())
+        self.assertEqual(stat.S_IMODE(os.stat(lock_path).st_mode), 0o600)
+        with open(auth_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertEqual(data["active_provider"], "other")
+        self.assertEqual(data["providers"]["other"]["project_id"], "keep_project")
+        self.assertEqual(data["providers"]["antigravity"]["project_id"], "proj_333")
+        self.assertEqual(
+            data["providers"]["google-gemini-cli"],
+            data["providers"]["antigravity"],
+        )
 
     def test_sync_token_to_auth_json_sets_canonical_runtime_active_provider(self):
         sync_token_to_auth_json(

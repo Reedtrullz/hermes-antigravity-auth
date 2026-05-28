@@ -1,4 +1,5 @@
 """Persistent account and credential storage for Hermes Antigravity plugin."""
+import contextlib
 import os
 import json
 import secrets
@@ -23,6 +24,33 @@ _accounts_store_lock = threading.Lock()
 def _secret_file_opener(path: str, flags: int) -> int:
     """Open secret-bearing temp files with private permissions immediately."""
     return os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+
+
+def _lock_file_opener(path: str, flags: int) -> int:
+    return os.open(path, flags | os.O_CREAT, 0o600)
+
+
+@contextlib.contextmanager
+def _process_file_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+", encoding="utf-8", opener=_lock_file_opener) as lock_file:
+        try:
+            os.chmod(lock_path, 0o600)
+        except Exception:
+            pass
+        try:
+            import fcntl
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            pass
+        try:
+            yield
+        finally:
+            try:
+                import fcntl
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except Exception:
+                pass
 
 
 def get_hermes_home() -> Path:
@@ -119,13 +147,8 @@ def normalize_active_indices_after_explicit_switch(
     return resolved_index
 
 
-def load_accounts() -> dict[str, Any]:
-    """
-    Loads the antigravity-accounts.json storage.
-    Returns a dictionary conforming to the AccountStorageV4 schema structure.
-    If the file is missing, malformed, or doesn't exist, it gracefully returns default structure.
-    """
-    default_storage = {
+def _default_accounts_storage() -> dict[str, Any]:
+    return {
         "version": 4,
         "accounts": [],
         "activeIndex": 0,
@@ -135,40 +158,73 @@ def load_accounts() -> dict[str, Any]:
             "gemini": 0
         }
     }
-    path = get_accounts_json_path()
+
+
+def _load_accounts_unlocked(path: Path | None = None) -> dict[str, Any]:
+    default_storage = _default_accounts_storage()
+    path = get_accounts_json_path() if path is None else path
     if not path.exists():
         return default_storage
 
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            if not isinstance(data, dict):
+                return default_storage
+
+            if "version" not in data:
+                data["version"] = 4
+            if "accounts" not in data or not isinstance(data["accounts"], list):
+                data["accounts"] = []
+            if "activeIndex" not in data:
+                data["activeIndex"] = 0
+            if "cursor" not in data:
+                data["cursor"] = data["activeIndex"]
+            if "activeIndexByFamily" not in data or not isinstance(data["activeIndexByFamily"], dict):
+                data["activeIndexByFamily"] = {
+                    "claude": 0,
+                    "gemini": 0
+                }
+            else:
+                family = data["activeIndexByFamily"]
+                if "claude" not in family:
+                    family["claude"] = 0
+                if "gemini" not in family:
+                    family["gemini"] = 0
+
+            return data
+    except Exception:
+        return default_storage
+
+
+def load_accounts() -> dict[str, Any]:
+    """
+    Loads the antigravity-accounts.json storage.
+    Returns a dictionary conforming to the AccountStorageV4 schema structure.
+    If the file is missing, malformed, or doesn't exist, it gracefully returns default structure.
+    """
+    path = get_accounts_json_path()
     with _accounts_store_lock:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if not isinstance(data, dict):
-                    return default_storage
-                
-                if "version" not in data:
-                    data["version"] = 4
-                if "accounts" not in data or not isinstance(data["accounts"], list):
-                    data["accounts"] = []
-                if "activeIndex" not in data:
-                    data["activeIndex"] = 0
-                if "cursor" not in data:
-                    data["cursor"] = data["activeIndex"]
-                if "activeIndexByFamily" not in data or not isinstance(data["activeIndexByFamily"], dict):
-                    data["activeIndexByFamily"] = {
-                        "claude": 0,
-                        "gemini": 0
-                    }
-                else:
-                    family = data["activeIndexByFamily"]
-                    if "claude" not in family:
-                        family["claude"] = 0
-                    if "gemini" not in family:
-                        family["gemini"] = 0
-                
-                return data
-        except Exception:
-            return default_storage
+        return _load_accounts_unlocked(path)
+
+
+def _save_accounts_unlocked(path: Path, storage_dict: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+
+    try:
+        with open(tmp_path, "w", encoding="utf-8", opener=_secret_file_opener) as f:
+            json.dump(storage_dict, f, indent=2)
+        os.replace(tmp_path, path)
+        os.chmod(path, 0o600)
+    except Exception as e:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass
+        raise e
 
 
 def save_accounts(storage_dict: dict[str, Any]) -> None:
@@ -177,23 +233,9 @@ def save_accounts(storage_dict: dict[str, Any]) -> None:
     Performs an atomic write using a .tmp file and rename.
     """
     path = get_accounts_json_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    
-    tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
-
-    with _accounts_store_lock:
-        try:
-            with open(tmp_path, "w", encoding="utf-8", opener=_secret_file_opener) as f:
-                json.dump(storage_dict, f, indent=2)
-            os.replace(tmp_path, path)
-            os.chmod(path, 0o600)
-        except Exception as e:
-            if tmp_path.exists():
-                try:
-                    tmp_path.unlink()
-                except Exception:
-                    pass
-            raise e
+    with _process_file_lock(path.with_suffix(".lock")):
+        with _accounts_store_lock:
+            _save_accounts_unlocked(path, storage_dict)
 
 
 def sync_token_to_auth_json(
@@ -208,63 +250,64 @@ def sync_token_to_auth_json(
     agent.google_oauth which reads auth/google_oauth.json, while the Antigravity
     CLI and plugin manage auth.json. This function writes to auth.json.
     Use sync_token_to_google_oauth() in cli.py for the google_oauth.json store.
-    
+
     Updates or inserts the 'antigravity' key in auth.json provider list.
     Saves auth.json using process/thread-safe write lock.
     """
     path = get_auth_json_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    
-    current_epoch_ms = int(time.time() * 1000)
-    tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
 
-    with _auth_store_lock:
-        data = {
-            "providers": {},
-            "active_provider": ""
-        }
-        
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    parsed = json.load(f)
-                    if isinstance(parsed, dict):
-                        data = parsed
-            except Exception:
-                pass
-                
-        if "providers" not in data or not isinstance(data["providers"], dict):
-            data["providers"] = {}
-            
-        data["providers"]["antigravity"] = {
-            "tokens": {
-                "access_token": access_token,
-                "refresh_token": refresh_token
-            },
-            "project_id": project_id,
-            "email": email,
-            "last_refresh": current_epoch_ms
-        }
-        # Also register under google-gemini-cli so the /model picker detects it
-        data["providers"]["google-gemini-cli"] = data["providers"]["antigravity"]
-        
-        if set_active:
-            data["active_provider"] = "google-gemini-cli"
-        elif not access_token and not refresh_token and data.get("active_provider") in ("antigravity", "google-gemini-cli"):
-            data["active_provider"] = ""
-            
-        try:
-            with open(tmp_path, "w", encoding="utf-8", opener=_secret_file_opener) as f:
-                json.dump(data, f, indent=2)
-            os.replace(tmp_path, path)
-            os.chmod(path, 0o600)
-        except Exception as e:
-            if tmp_path.exists():
+    with _process_file_lock(path.with_suffix(".lock")):
+        with _auth_store_lock:
+            current_epoch_ms = int(time.time() * 1000)
+            tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+
+            data = {
+                "providers": {},
+                "active_provider": ""
+            }
+
+            if path.exists():
                 try:
-                    tmp_path.unlink()
+                    with open(path, "r", encoding="utf-8") as f:
+                        parsed = json.load(f)
+                        if isinstance(parsed, dict):
+                            data = parsed
                 except Exception:
                     pass
-            raise e
+
+            if "providers" not in data or not isinstance(data["providers"], dict):
+                data["providers"] = {}
+
+            data["providers"]["antigravity"] = {
+                "tokens": {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token
+                },
+                "project_id": project_id,
+                "email": email,
+                "last_refresh": current_epoch_ms
+            }
+            # Also register under google-gemini-cli so the /model picker detects it
+            data["providers"]["google-gemini-cli"] = data["providers"]["antigravity"]
+
+            if set_active:
+                data["active_provider"] = "google-gemini-cli"
+            elif not access_token and not refresh_token and data.get("active_provider") in ("antigravity", "google-gemini-cli"):
+                data["active_provider"] = ""
+
+            try:
+                with open(tmp_path, "w", encoding="utf-8", opener=_secret_file_opener) as f:
+                    json.dump(data, f, indent=2)
+                os.replace(tmp_path, path)
+                os.chmod(path, 0o600)
+            except Exception as e:
+                if tmp_path.exists():
+                    try:
+                        tmp_path.unlink()
+                    except Exception:
+                        pass
+                raise e
 
 
 def get_active_token_from_auth_json() -> dict[str, str]:
@@ -281,26 +324,26 @@ def get_active_token_from_auth_json() -> dict[str, str]:
     path = get_auth_json_path()
     if not path.exists():
         return default_res
-        
+
     with _auth_store_lock:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if not isinstance(data, dict):
                     return default_res
-                
+
                 providers = data.get("providers")
                 if not isinstance(providers, dict):
                     return default_res
-                    
+
                 antigravity = providers.get("antigravity")
                 if not isinstance(antigravity, dict):
                     return default_res
-                    
+
                 tokens = antigravity.get("tokens")
                 if not isinstance(tokens, dict):
                     return default_res
-                    
+
                 return {
                     "access_token": tokens.get("access_token", ""),
                     "refresh_token": tokens.get("refresh_token", ""),
