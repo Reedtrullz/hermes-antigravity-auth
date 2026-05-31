@@ -1,9 +1,19 @@
 import json
+import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
 from antigravity_auth.credentials import resolve_oauth_credentials
+
+
+def _mock_bundled_credentials():
+  """Context manager that injects a fake _credentials module so bundled fallback works in CI."""
+  mod = types.ModuleType("antigravity_auth._credentials")
+  mod.ANTIGRAVITY_CLIENT_ID = "bundled-id"
+  mod.ANTIGRAVITY_CLIENT_SECRET = "bundled-secret"
+  return patch.dict(sys.modules, {"antigravity_auth._credentials": mod})
 
 
 class TestCredentials(unittest.TestCase):
@@ -59,7 +69,7 @@ class TestCredentials(unittest.TestCase):
       creds_file.write("{not valid json")
       creds_file.flush()
 
-      with patch.dict("os.environ", {
+      with _mock_bundled_credentials(), patch.dict("os.environ", {
         "HERMES_ANTIGRAVITY_CREDENTIALS_FILE": creds_file.name,
       }, clear=True):
         cid, csec = resolve_oauth_credentials()
@@ -71,7 +81,7 @@ class TestCredentials(unittest.TestCase):
       json.dump(["client_id", "client_secret"], creds_file)
       creds_file.flush()
 
-      with patch.dict("os.environ", {
+      with _mock_bundled_credentials(), patch.dict("os.environ", {
         "HERMES_ANTIGRAVITY_CREDENTIALS_FILE": creds_file.name,
       }, clear=True):
         cid, csec = resolve_oauth_credentials()
@@ -80,7 +90,7 @@ class TestCredentials(unittest.TestCase):
 
   def test_missing_both_env_and_file_returns_bundled(self):
     with tempfile.TemporaryDirectory() as tmpdir:
-      with patch.dict("os.environ", {"HERMES_HOME": tmpdir}, clear=True):
+      with _mock_bundled_credentials(), patch.dict("os.environ", {"HERMES_HOME": tmpdir}, clear=True):
         cid, csec = resolve_oauth_credentials()
         self.assertTrue(cid)
         self.assertTrue(csec)
