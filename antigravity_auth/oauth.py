@@ -6,12 +6,12 @@ import json
 import time
 import sys
 import traceback
-import gzip
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
 
 try:
+    from ._http_utils import decompress_response as _decompress
     from .constants import (
         ANTIGRAVITY_CLIENT_ID,
         ANTIGRAVITY_CLIENT_SECRET,
@@ -24,6 +24,7 @@ try:
     )
     from .debug import createLogger, format_error_for_log
 except ImportError:
+    from _http_utils import decompress_response as _decompress
     from constants import (
         ANTIGRAVITY_CLIENT_ID,
         ANTIGRAVITY_CLIENT_SECRET,
@@ -135,12 +136,6 @@ def authorize_antigravity(project_id: str = "") -> dict:
         "projectId": project_id or "",
         "project_id": project_id or "",
     }
-
-def _decompress(body: bytes, response) -> bytes:
-    encoding = response.headers.get("Content-Encoding", "")
-    if "gzip" in encoding:
-        return gzip.decompress(body)
-    return body
 
 
 def make_post_request(url: str, headers: dict, data: bytes, timeout: int = 10) -> tuple[int, bytes]:

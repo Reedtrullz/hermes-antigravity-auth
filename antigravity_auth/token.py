@@ -1,5 +1,4 @@
 """Access token refresh, expiry detection, and OAuth error parsing."""
-import gzip
 import json
 import time
 import urllib.request
@@ -7,6 +6,7 @@ import urllib.error
 from urllib.parse import urlencode
 
 try:
+    from ._http_utils import decompress_response as _decompress
     from .constants import ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET
     from .storage import (
         get_active_token_from_auth_json,
@@ -16,6 +16,7 @@ try:
         update_accounts,
     )
 except ImportError:
+    from _http_utils import decompress_response as _decompress
     from constants import ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET
     from storage import (
         get_active_token_from_auth_json,
@@ -25,12 +26,6 @@ except ImportError:
         update_accounts,
     )
 
-
-def _decompress(body: bytes, response) -> bytes:
-    encoding = response.headers.get("Content-Encoding", "")
-    if "gzip" in encoding:
-        return gzip.decompress(body)
-    return body
 
 
 class AntigravityTokenRefreshError(Exception):
