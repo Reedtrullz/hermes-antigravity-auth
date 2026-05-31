@@ -270,6 +270,31 @@ ls ~/.hermes/auth/
 
 ---
 
+## Security Discipline
+
+### File Permissions
+
+All credential-bearing and diagnostic files use private permissions:
+
+| Directory / File | Mode | Purpose |
+|------------------|------|---------|
+| `~/.hermes/antigravity-accounts.json` | 0o600 | OAuth refresh tokens, access tokens, fingerprints |
+| `~/.hermes/auth.json` | 0o600 | Runtime auth state |
+| `~/.hermes/logs/antigravity/` | 0o700 | Debug log directory |
+| `~/.hermes/logs/antigravity/*.log` | 0o600 | Debug log files (25-file rotation) |
+| `~/.hermes/antigravity-traces/` | 0o700 | Interceptor trace directory |
+| `~/.hermes/antigravity-traces/*.log` | 0o600 | Trace files (50-file rotation) |
+
+### Credential Packaging Guards
+
+The `antigravity_auth/_credentials.py` file is gitignored and blocked from wheel/sdist builds by `setup.py`'s `packaging_guard` module. `MANIFEST.in` provides a second layer of exclusion for sdist builds.
+
+### Redaction
+
+`antigravity_auth/redaction.py` redacts OAuth tokens, bearer strings, session tokens, client secrets, and auth codes from debug output. Both snake_case and camelCase key variants are covered.
+
+---
+
 ## Troubleshooting
 
 | Error | Likely Cause | Fix |
