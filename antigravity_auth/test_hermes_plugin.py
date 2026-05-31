@@ -132,6 +132,45 @@ class TestHermesPluginRegister(unittest.TestCase):
     self.assertEqual(antigravity.name, "google-gemini-cli")
     self.assertIn("ag", antigravity.aliases)
 
+  def test_provider_plugin_exposes_antigravity_outside_google_group(self):
+    from collections import namedtuple
+
+    import antigravity_auth.hermes_provider_plugin as provider_mod
+
+    ProviderEntry = namedtuple("ProviderEntry", "slug label tui_desc")
+    fake_models = types.ModuleType("hermes_cli.models")
+    fake_models.ProviderEntry = ProviderEntry
+    fake_models._PROVIDER_MODELS = {"google-gemini-cli": ["old-model"]}
+    fake_models._PROVIDER_LABELS = {"google-gemini-cli": "Google Gemini (OAuth)"}
+    fake_models._PROVIDER_ALIASES = {}
+    fake_models.CANONICAL_PROVIDERS = [
+      ProviderEntry("gemini", "Google AI Studio", "Google AI Studio"),
+      ProviderEntry("google-gemini-cli", "Google Gemini (OAuth)", "Google Gemini via OAuth"),
+    ]
+    fake_models.PROVIDER_GROUPS = {
+      "google": ("Google Gemini", ["gemini", "google-gemini-cli"]),
+    }
+    fake_models._SLUG_TO_GROUP = {
+      "gemini": "google",
+      "google-gemini-cli": "google",
+    }
+
+    fake_hermes_cli = types.ModuleType("hermes_cli")
+    fake_hermes_cli.models = fake_models
+
+    with patch.dict(sys.modules, {
+        "hermes_cli": fake_hermes_cli,
+        "hermes_cli.models": fake_models,
+    }), \
+        patch.object(provider_mod, "_set_oauth_env_from_credentials"):
+      provider_mod._patch_hermes_model_picker()
+
+    self.assertEqual(fake_models._PROVIDER_LABELS["google-gemini-cli"], "Google Antigravity")
+    self.assertEqual(fake_models._PROVIDER_ALIASES["ag"], "google-gemini-cli")
+    self.assertNotIn("google-gemini-cli", fake_models.PROVIDER_GROUPS["google"][1])
+    self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
+    self.assertIn("gemini-3.5-flash-high", fake_models._PROVIDER_MODELS["google-gemini-cli"])
+
   def test_antigravity_models_include_claude(self):
     from antigravity_auth.hermes_provider_plugin import ANTIGRAVITY_MODELS
     claude_models = [m for m in ANTIGRAVITY_MODELS if "claude" in m.lower()]

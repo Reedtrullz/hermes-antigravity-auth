@@ -78,6 +78,9 @@ Accounts rotate on rate limits. Gemini has dual quota pools (Antigravity headers
 ### 6. Fingerprint System
 Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and clientMetadata. History tracked (max 5), restorable.
 
+### 7. Security Discipline
+Debug logs (0o700 dir, 0o600 files, 25-file rotation) and trace files (0o700 dir, 0o600 files, 50-file rotation) use private permissions. `redaction.py` strips OAuth tokens, bearer strings, session tokens, and client secrets from all diagnostic output. The `packaging_guard.py` module plus `MANIFEST.in` prevent `_credentials.py` from shipping in wheels/sdist.
+
 ## Documentation
 
 - [README.md](README.md) — Installation & usage

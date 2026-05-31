@@ -81,10 +81,15 @@ Accept: text/event-stream
 | Claude Sonnet 4.6 | `claude-sonnet-4-6` | Anthropic | Registered |
 | Claude Sonnet 4.6 Thinking | `claude-sonnet-4-6-thinking` | Anthropic | Registered |
 | Claude Opus 4.6 Thinking | `claude-opus-4-6-thinking` | Anthropic | Registered |
-| Gemini 3.5 Flash High | `gemini-3.5-flash-high` | Google | Registered |
-| Gemini 3.5 Flash Medium | `gemini-3.5-flash-medium` | Google | Registered |
-| Gemini 3.1 Pro High | `gemini-3.1-pro-high` | Google | Registered |
-| Gemini 3.1 Pro Low | `gemini-3.1-pro-low` | Google | Registered |
+| Gemini 3.5 Flash | `gemini-3.5-flash` | Google | Registered alias to backend `gemini-3.5-flash-low` |
+| Gemini 3.5 Flash High | `gemini-3.5-flash-high` | Google | Registered alias to backend `gemini-3-flash-agent` |
+| Gemini 3.5 Flash Medium | `gemini-3.5-flash-medium` | Google | Registered alias to backend `gemini-3.5-flash-low` |
+| Gemini 3.5 Flash Low | `gemini-3.5-flash-low` | Google | Backend ID |
+| Gemini 3.5 Flash Minimal | `gemini-3.5-flash-minimal` | Google | Registered alias to backend `gemini-3.5-flash-low` |
+| Gemini 3.1 Pro | `gemini-3.1-pro` | Google | Canonical bare ID |
+| Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | Google | Compatibility alias to backend `gemini-3.1-pro` |
+| Gemini 3.1 Pro High | `gemini-3.1-pro-high` | Google | Tiered backend ID |
+| Gemini 3.1 Pro Low | `gemini-3.1-pro-low` | Google | Tiered backend ID |
 | Gemini 3.0 Pro Preview | `gemini-3-pro-preview` | Google | Legacy registered |
 | Gemini 3.0 Flash Preview | `gemini-3-flash-preview` | Google | Legacy registered |
 | Gemini 2.5 Pro | `gemini-2.5-pro` | Google | Legacy registered |

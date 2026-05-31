@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 
 try:
   from providers import register_provider
@@ -70,20 +72,26 @@ class AntigravityProfile(ProviderProfile):
   """Antigravity model names routed through Hermes' google-gemini-cli client."""
 
 
-# Model names MUST match what the Cloud Code API (cloudcode-pa.googleapis.com)
-# actually recognises.  Antigravity 2.0 (May 2026) uses bare names without the
-# -preview suffix for 3.1+ models.  Gemini 3.0 keeps the legacy -preview suffix.
-# Claude names are passed through as-is — Antigravity forwards those to the
+# User-facing aliases are listed here; transform/envelope.py maps them to the
+# Cloud Code IDs Google currently accepts.  Gemini 3.5 Flash is especially
+# backend-specific: high routes to gemini-3-flash-agent, while the other 3.5
+# Flash aliases route to gemini-3.5-flash-low.
+# Claude names are passed through as-is; Antigravity forwards those to the
 # Anthropic backend.
 ANTIGRAVITY_MODELS = (
   # Claude models
   "claude-opus-4-6-thinking",
   "claude-sonnet-4-6-thinking",
   "claude-sonnet-4-6",
-  # Gemini 3.5 (latest)
+  # Gemini 3.5 Flash aliases
+  "gemini-3.5-flash",
   "gemini-3.5-flash-high",
   "gemini-3.5-flash-medium",
-  # Gemini 3.1
+  "gemini-3.5-flash-low",
+  "gemini-3.5-flash-minimal",
+  # Gemini 3.1 Pro aliases
+  "gemini-3.1-pro",
+  "gemini-3.1-pro-preview",
   "gemini-3.1-pro-high",
   "gemini-3.1-pro-low",
   # Gemini 3.0 (legacy -preview suffix)
@@ -108,7 +116,7 @@ antigravity = AntigravityProfile(
   env_vars=(),
   base_url="cloudcode-pa://google",
   auth_type="oauth_external",
-  default_aux_model="gemini-3.5-flash-medium",
+  default_aux_model="gemini-3.5-flash",
   fallback_models=ANTIGRAVITY_MODELS,
   default_headers={},
 )
@@ -131,37 +139,64 @@ def _patch_hermes_model_picker() -> None:
   except Exception:
     return
 
-  models._PROVIDER_MODELS["google-gemini-cli"] = list(ANTIGRAVITY_MODELS)
-
   label = "Google Antigravity"
   desc = "Google Antigravity (Claude/Gemini via OAuth + Code Assist)"
 
-  # Alias registration — non-fatal, best-effort.
-  try:
-    models._PROVIDER_LABELS["google-gemini-cli"] = label
-    for alias in ANTIGRAVITY_ALIASES:
-      models._PROVIDER_ALIASES[alias] = "google-gemini-cli"
-  except Exception:
-    pass
+  def apply_patches() -> bool:
+    models._PROVIDER_MODELS["google-gemini-cli"] = list(ANTIGRAVITY_MODELS)
 
-  # Provider label overrides and CLI aliases — optional Hermes internals.
-  try:
-    import hermes_cli.providers as cli_providers
+    # Alias registration — non-fatal, best-effort.
+    try:
+      models._PROVIDER_LABELS["google-gemini-cli"] = label
+      for alias in ANTIGRAVITY_ALIASES:
+        models._PROVIDER_ALIASES[alias] = "google-gemini-cli"
+    except Exception:
+      pass
 
-    cli_providers._LABEL_OVERRIDES["google-gemini-cli"] = label
-    for alias in ANTIGRAVITY_ALIASES:
-      cli_providers.ALIASES[alias] = "google-gemini-cli"
-  except Exception:
-    pass
+    # Provider label overrides and CLI aliases — optional Hermes internals.
+    try:
+      import hermes_cli.providers as cli_providers
 
-  try:
-    replacement = models.ProviderEntry("google-gemini-cli", label, desc)
-    for index, entry in enumerate(models.CANONICAL_PROVIDERS):
-      if entry.slug == "google-gemini-cli":
-        models.CANONICAL_PROVIDERS[index] = replacement
-        break
-  except Exception:
-    pass
+      cli_providers._LABEL_OVERRIDES["google-gemini-cli"] = label
+      for alias in ANTIGRAVITY_ALIASES:
+        cli_providers.ALIASES[alias] = "google-gemini-cli"
+    except Exception:
+      pass
+
+    try:
+      replacement = models.ProviderEntry("google-gemini-cli", label, desc)
+      for index, entry in enumerate(models.CANONICAL_PROVIDERS):
+        if entry.slug == "google-gemini-cli":
+          models.CANONICAL_PROVIDERS[index] = replacement
+          break
+    except Exception:
+      pass
+
+    groups_ready = hasattr(models, "PROVIDER_GROUPS") and hasattr(models, "_SLUG_TO_GROUP")
+    if groups_ready:
+      try:
+        group_label, members = models.PROVIDER_GROUPS.get("google", ("Google Gemini", []))
+        if "google-gemini-cli" in members:
+          remaining = [slug for slug in members if slug != "google-gemini-cli"]
+          if remaining:
+            models.PROVIDER_GROUPS["google"] = (group_label, remaining)
+          else:
+            models.PROVIDER_GROUPS.pop("google", None)
+        models._SLUG_TO_GROUP.pop("google-gemini-cli", None)
+      except Exception:
+        pass
+    return groups_ready
+
+  if apply_patches():
+    return
+
+  def late_patch() -> None:
+    for _ in range(1000):
+      if apply_patches():
+        return
+      time.sleep(0.001)
+
+  threading.Thread(target=late_patch, daemon=True).start()
 
 
 register_provider(antigravity)

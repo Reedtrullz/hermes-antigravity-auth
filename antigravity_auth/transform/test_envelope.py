@@ -251,13 +251,42 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3.5-flash", "gemini-cli"
         )
-        self.assertEqual("gemini-3.5-flash-medium", result)
+        self.assertEqual("gemini-3.5-flash-low", result)
+
+    def test_gemini_cli_maps_3_5_flash_quality_aliases(self):
+        expected = {
+            "gemini-3.5-flash-high": "gemini-3-flash-agent",
+            "gemini-3.5-flash-medium": "gemini-3.5-flash-low",
+            "gemini-3.5-flash-low": "gemini-3.5-flash-low",
+            "gemini-3.5-flash-minimal": "gemini-3.5-flash-low",
+        }
+        for model, backend_model in expected.items():
+            with self.subTest(model=model):
+                self.assertEqual(
+                    backend_model,
+                    resolve_model_for_header_style(model, "gemini-cli"),
+                )
 
     def test_gemini_cli_strips_prefix_3_1_pro_high(self):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3.1-pro", "gemini-cli"
         )
-        self.assertEqual("gemini-3.1-pro-high", result)
+        self.assertEqual("gemini-3.1-pro-low", result)
+
+    def test_gemini_cli_maps_3_1_pro_quality_aliases(self):
+        for model in (
+            "gemini-3.1-pro-high",
+            "gemini-3.1-pro-low",
+        ):
+            with self.subTest(model=model):
+                self.assertEqual(
+                    model,
+                    resolve_model_for_header_style(model, "gemini-cli"),
+                )
+        self.assertEqual(
+            "gemini-3.1-pro",
+            resolve_model_for_header_style("gemini-3.1-pro-preview", "gemini-cli"),
+        )
 
     def test_gemini_cli_strips_prefix_sonnet_thinking(self):
         result = resolve_model_for_header_style(
@@ -273,7 +302,7 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
 
     def test_resolve_model_for_header_style_uses_model_name_map_for_antigravity_aliases(self):
         self.assertEqual(
-            "gemini-3.1-pro-high",
+            "gemini-3.1-pro-low",
             resolve_model_for_header_style("antigravity-gemini-3.1-pro", "antigravity"),
         )
         self.assertEqual(

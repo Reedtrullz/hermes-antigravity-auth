@@ -274,8 +274,8 @@ All aliases below route through canonical provider `google-gemini-cli`:
 | Family | Model IDs | Notes |
 |--------|-----------|-------|
 | Claude | `claude-sonnet-4-6`, `claude-sonnet-4-6-thinking`, `claude-opus-4-6-thinking` | Antigravity header style |
-| Gemini 3.5 | `gemini-3.5-flash-medium`, `gemini-3.5-flash-high` | Antigravity 2.0 names |
-| Gemini 3.1 | `gemini-3.1-pro-low`, `gemini-3.1-pro-high` | Antigravity 2.0 names; no `-preview` suffix |
+| Gemini 3.5 | `gemini-3.5-flash`, `gemini-3.5-flash-minimal`, `gemini-3.5-flash-medium`, `gemini-3.5-flash-high`, `gemini-3.5-flash-low` | High routes to backend `gemini-3-flash-agent`; other aliases route to `gemini-3.5-flash-low` |
+| Gemini 3.1 | `gemini-3.1-pro`, `gemini-3.1-pro-preview`, `gemini-3.1-pro-low`, `gemini-3.1-pro-high` | Prefer bare/tiered IDs; `-preview` is a compatibility alias routed to `gemini-3.1-pro` |
 | Gemini 3.0 legacy | `gemini-3-pro-preview`, `gemini-3-flash-preview` | Legacy names keep `-preview` |
 | Gemini 2.5 legacy | `gemini-2.5-flash`, `gemini-2.5-pro` | Registered fallback models |
 | GPT OSS | `gpt-oss-120b-medium` | Registered model ID |
@@ -442,14 +442,17 @@ hermes antigravity doctor      # Diagnose install/config/auth state
 ### Model Not Found
 
 **"Model not found" or HTTP 404**: Use one of the exact model IDs in
-[Available Models](#available-models). Antigravity 2.0 Gemini 3.1 and 3.5 model
-IDs do not use a preview suffix; only the Gemini 3.0 legacy IDs shown above keep
-that suffix.
+[Available Models](#available-models). The plugin rewrites registered
+user-facing aliases to the backend IDs Cloud Code currently accepts. For Gemini
+3.5 Flash, bare/low/medium/minimal are sent as `gemini-3.5-flash-low`; high is
+sent as `gemini-3-flash-agent`. Only the Gemini 3.0 legacy IDs shown above keep
+their `-preview` suffix as canonical names.
 
 ```bash
 # ✅ Current Antigravity 2.0 IDs
-hermes -z "Hello" --provider ag --model gemini-3.1-pro-high
-hermes -z "Hello" --provider ag --model gemini-3.5-flash-medium
+hermes -z "Hello" --provider ag --model gemini-3.1-pro
+hermes -z "Hello" --provider ag --model gemini-3.5-flash
+hermes -z "Hello" --provider ag --model gemini-3.5-flash-high
 
 # ✅ Legacy Gemini 3.0 ID
 hermes -z "Hello" --provider ag --model gemini-3-flash-preview
@@ -504,8 +507,10 @@ continue
 
 ### Known Limitations
 
-**Model IDs**: Use the exact registered IDs. Gemini 3.1/3.5 Antigravity 2.0
-models do not use a preview suffix; Gemini 3.0 legacy models still do.
+**Model IDs**: The plugin keeps compatibility aliases such as
+`gemini-3.5-flash-high` and `gemini-3.1-pro-high`, but maps them to the Cloud
+Code IDs Google currently accepts. Prefer `gemini-3.5-flash`,
+`gemini-3.5-flash-high`, and `gemini-3.1-pro` for new configs.
 
 **Endpoint fallback**: The code includes an endpoint helper and records 5xx
 failures, but current runtime selection still uses the production Cloud Code

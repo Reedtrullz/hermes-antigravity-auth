@@ -228,8 +228,11 @@ def _check_model_registry() -> DoctorRow:
     required = [
       "claude-sonnet-4-6-thinking",
       "claude-opus-4-6-thinking",
+      "gemini-3.1-pro",
       "gemini-3.1-pro-high",
-      "gemini-3.5-flash-medium",
+      "gemini-3.5-flash",
+      "gemini-3.5-flash-high",
+      "gemini-3.5-flash-low",
     ]
     missing = [model for model in required if model not in MODEL_NAME_MAP]
     if missing:

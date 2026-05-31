@@ -199,6 +199,40 @@ class TestRequestHook(unittest.TestCase):
         self.assertEqual(r.extensions["antigravity_header_style"], "antigravity")
         self.assertEqual(r.extensions["antigravity_model_family"], "claude")
 
+    def test_request_hook_rewrites_outgoing_model_alias_in_envelope(self):
+        request = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+            headers={"Authorization": "Bearer stale", "Content-Type": "application/json"},
+            json={
+                "project": "project-1",
+                "model": "gemini-3.5-flash-high",
+                "request": {
+                    "model": "gemini-3.5-flash-high",
+                    "contents": [],
+                },
+            },
+        )
+        request.read()
+        config = type("Config", (), {
+            "cli_first": False,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 90,
+        })()
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.interceptor._select_request_account",
+            return_value=None,
+        ):
+            self.hook(request)
+
+        body = json.loads(request.content)
+        self.assertEqual(body["model"], "gemini-3-flash-agent")
+        self.assertEqual(body["request"]["model"], "gemini-3-flash-agent")
+        self.assertEqual(int(request.headers["Content-Length"]), len(request.content))
+
     def test_request_hook_sets_authorization_for_selected_account(self):
         class FakeRefreshParts:
             refresh_token = "refresh-1"

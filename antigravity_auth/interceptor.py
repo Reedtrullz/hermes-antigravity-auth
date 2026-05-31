@@ -132,6 +132,12 @@ def _request_model_from_response(response: httpx.Response) -> str:
   return ""
 
 
+def _replace_request_json(request: httpx.Request, body: dict[str, Any]) -> None:
+  content = json.dumps(body, separators=(",", ":")).encode("utf-8")
+  request._content = content
+  request.headers["Content-Length"] = str(len(content))
+
+
 def _account_identity_for_managed_account(account: Any) -> dict[str, str | None]:
   parts = getattr(account, "refresh_parts", None)
   return {
@@ -745,10 +751,10 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
         _trace("hook-skip", reason="no-request-key", body_keys=str(list(body.keys()) if isinstance(body, dict) else type(body).__name__))
         return
     
-    model = str(body.get("model", ""))
-    header_style = _select_header_style_for_model(model, config.cli_first)
+    requested_model = str(body.get("model", ""))
+    header_style = _select_header_style_for_model(requested_model, config.cli_first)
     request.extensions["antigravity_header_style"] = header_style
-    request.extensions["antigravity_model_family"] = _model_family_for_model(model)
+    request.extensions["antigravity_model_family"] = _model_family_for_model(requested_model)
 
     if header_style == "gemini-cli":
         logger.warning(
@@ -756,8 +762,15 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
             "Set cli_first: false in config to use the Antigravity header style."
         )
 
-    selected = _select_request_account(model, header_style, config)
-    model = resolve_model_for_header_style(model, header_style)
+    selected = _select_request_account(requested_model, header_style, config)
+    model = resolve_model_for_header_style(requested_model, header_style)
+    if model != requested_model:
+        body["model"] = model
+        inner_request = body.get("request")
+        if isinstance(inner_request, dict) and isinstance(inner_request.get("model"), str):
+            inner_request["model"] = model
+        _replace_request_json(request, body)
+        _trace("hook-model-rewritten", requested=requested_model, resolved=model)
     
     for key in list(request.headers.keys()):
         if key.lower() not in ("host", "authorization", "content-type", "accept", "accept-encoding", "content-length"):
@@ -1304,6 +1317,8 @@ def install() -> bool:
         cli_first = False
       header_style = _select_header_style_for_model(model, cli_first)
       resolved_model = resolve_model_for_header_style(model, header_style)
+      if resolved_model != model:
+        _trace("patched-wrap-resolved", requested=model, resolved=resolved_model)
     transform_model = f"{model} {resolved_model}" if isinstance(model, str) else str(resolved_model)
     if isinstance(inner_request, dict) and "claude" in transform_model.lower():
       _inject_tool_call_ids(inner_request)

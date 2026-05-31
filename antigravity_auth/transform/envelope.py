@@ -33,18 +33,43 @@ ANTIGRAVITY_API_CLIENTS = [
     "google-cloud-sdk vscode/1.95.0",
 ]
 
+GEMINI_35_FLASH_LOW_MODEL = "gemini-3.5-flash-low"
+GEMINI_35_FLASH_HIGH_MODEL = "gemini-3-flash-agent"
+
+
+def resolve_antigravity_gemini35_flash_backend_model(model: str) -> str | None:
+  """Map Gemini 3.5 Flash UI aliases to Antigravity backend IDs.
+
+  Upstream Antigravity/agy does not expose bare ``gemini-3.5-flash`` through
+  Cloud Code. High routes to ``gemini-3-flash-agent``; all other tiers route to
+  ``gemini-3.5-flash-low``.
+  """
+  lower = model.lower()
+  if lower.startswith("antigravity-"):
+    lower = lower[len("antigravity-"):]
+  if not lower.startswith("gemini-3.5-flash"):
+    return None
+  suffix = lower[len("gemini-3.5-flash"):]
+  if suffix not in ("", "-minimal", "-low", "-medium", "-high"):
+    return None
+  return GEMINI_35_FLASH_HIGH_MODEL if suffix == "-high" else GEMINI_35_FLASH_LOW_MODEL
+
+
 MODEL_NAME_MAP: dict[str, str] = {
     # Antigravity-prefixed aliases → Cloud Code API model IDs
     "antigravity-gemini-3-pro": "gemini-3-pro-preview",
     "antigravity-gemini-3-pro-preview": "gemini-3-pro-preview",
-    "antigravity-gemini-3.1-pro": "gemini-3.1-pro-high",
+    "antigravity-gemini-3.1-pro": "gemini-3.1-pro-low",
+    "antigravity-gemini-3.1-pro-preview": "gemini-3.1-pro",
     "antigravity-gemini-3.1-pro-high": "gemini-3.1-pro-high",
     "antigravity-gemini-3.1-pro-low": "gemini-3.1-pro-low",
     "antigravity-gemini-3-flash": "gemini-3-flash-preview",
     "antigravity-gemini-3-flash-preview": "gemini-3-flash-preview",
-    "antigravity-gemini-3.5-flash": "gemini-3.5-flash-medium",
-    "antigravity-gemini-3.5-flash-high": "gemini-3.5-flash-high",
-    "antigravity-gemini-3.5-flash-medium": "gemini-3.5-flash-medium",
+    "antigravity-gemini-3.5-flash": GEMINI_35_FLASH_LOW_MODEL,
+    "antigravity-gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH_MODEL,
+    "antigravity-gemini-3.5-flash-medium": GEMINI_35_FLASH_LOW_MODEL,
+    "antigravity-gemini-3.5-flash-low": GEMINI_35_FLASH_LOW_MODEL,
+    "antigravity-gemini-3.5-flash-minimal": GEMINI_35_FLASH_LOW_MODEL,
     "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
     "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
     "antigravity-claude-sonnet-4-6": "claude-sonnet-4-6",
@@ -54,11 +79,16 @@ MODEL_NAME_MAP: dict[str, str] = {
     "antigravity-gpt-oss-120b-medium": "gpt-oss-120b-medium",
     # Bare model ID passthroughs
     "gemini-3-pro-preview": "gemini-3-pro-preview",
+    "gemini-3.1-pro": "gemini-3.1-pro",
+    "gemini-3.1-pro-preview": "gemini-3.1-pro",
     "gemini-3.1-pro-high": "gemini-3.1-pro-high",
     "gemini-3.1-pro-low": "gemini-3.1-pro-low",
     "gemini-3-flash-preview": "gemini-3-flash-preview",
-    "gemini-3.5-flash-high": "gemini-3.5-flash-high",
-    "gemini-3.5-flash-medium": "gemini-3.5-flash-medium",
+    "gemini-3.5-flash": GEMINI_35_FLASH_LOW_MODEL,
+    "gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH_MODEL,
+    "gemini-3.5-flash-medium": GEMINI_35_FLASH_LOW_MODEL,
+    "gemini-3.5-flash-low": GEMINI_35_FLASH_LOW_MODEL,
+    "gemini-3.5-flash-minimal": GEMINI_35_FLASH_LOW_MODEL,
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-pro": "gemini-2.5-pro",
     "claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",

@@ -101,8 +101,8 @@ IDs include:
 | Family | Model IDs | Notes |
 |--------|-----------|-------|
 | Claude | `claude-sonnet-4-6`, `claude-sonnet-4-6-thinking`, `claude-opus-4-6-thinking` | Passed through to Antigravity/Claude routing |
-| Gemini 3.5 | `gemini-3.5-flash-medium`, `gemini-3.5-flash-high` | Antigravity 2.0 names |
-| Gemini 3.1 | `gemini-3.1-pro-low`, `gemini-3.1-pro-high` | Antigravity 2.0 names; no `-preview` suffix |
+| Gemini 3.5 | `gemini-3.5-flash`, `gemini-3.5-flash-minimal`, `gemini-3.5-flash-medium`, `gemini-3.5-flash-high`, `gemini-3.5-flash-low` | High routes to backend `gemini-3-flash-agent`; other aliases route to `gemini-3.5-flash-low` |
+| Gemini 3.1 | `gemini-3.1-pro`, `gemini-3.1-pro-preview`, `gemini-3.1-pro-low`, `gemini-3.1-pro-high` | Prefer bare/tiered IDs; `-preview` is a compatibility alias routed to `gemini-3.1-pro` |
 | Gemini 3.0 legacy | `gemini-3-pro-preview`, `gemini-3-flash-preview` | Legacy Gemini 3.0 names keep `-preview` |
 | Gemini 2.5 legacy | `gemini-2.5-flash`, `gemini-2.5-pro` | Registered fallback models |
 | GPT OSS | `gpt-oss-120b-medium` | Registered model ID |
