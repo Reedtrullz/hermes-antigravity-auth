@@ -2,13 +2,76 @@
 
 import json
 import os
+import stat
 import sys
 import tempfile
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+
+
+class TestTracePermissions(unittest.TestCase):
+    """Trace directory and files must use private permissions."""
+
+    def test_trace_directory_is_private(self):
+        """Trace directory must be created with 0o700 permissions."""
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp) / "antigravity-traces"
+            import antigravity_auth.interceptor as _int
+            old_trace_dir = _int._TRACE_DIR
+            _int._TRACE_DIR = None
+            try:
+                with patch.object(_int, "get_hermes_home", create=True, side_effect=AttributeError):
+                    pass
+                with patch("antigravity_auth.interceptor._TRACE_DIR", None):
+                    with patch("antigravity_auth.storage.get_hermes_home", return_value=Path(tmp)):
+                        _int._TRACE_DIR = None
+                        _int._trace("test-event", key="value")
+            finally:
+                _int._TRACE_DIR = old_trace_dir
+
+            self.assertTrue(trace_dir.exists(), "trace directory was not created")
+            mode = stat.S_IMODE(trace_dir.stat().st_mode)
+            self.assertEqual(mode, 0o700, f"trace dir mode is {oct(mode)}, expected 0o700")
+
+    def test_trace_file_is_private(self):
+        """Trace files must be created with 0o600 permissions."""
+        with tempfile.TemporaryDirectory() as tmp:
+            trace_dir = Path(tmp) / "antigravity-traces"
+            import antigravity_auth.interceptor as _int
+            old_trace_dir = _int._TRACE_DIR
+            _int._TRACE_DIR = None
+            try:
+                with patch("antigravity_auth.storage.get_hermes_home", return_value=Path(tmp)):
+                    _int._TRACE_DIR = None
+                    _int._trace("test-event", key="value")
+            finally:
+                _int._TRACE_DIR = old_trace_dir
+
+            trace_files = [f for f in trace_dir.iterdir() if f.is_file()]
+            self.assertGreater(len(trace_files), 0, "no trace files created")
+            for tf in trace_files:
+                mode = stat.S_IMODE(tf.stat().st_mode)
+                self.assertEqual(mode, 0o600, f"trace file {tf.name} mode is {oct(mode)}, expected 0o600")
+
+    def test_cleanup_old_traces(self):
+        """Trace rotation should remove old files beyond max_files."""
+        with tempfile.TemporaryDirectory() as tmp:
+            traces_path = Path(tmp)
+            import time
+            for i in range(10):
+                f = traces_path / f"trace-{i}.log"
+                f.write_text(f"line {i}")
+                os.utime(f, (time.time() - (10 - i), time.time() - (10 - i)))
+
+            from antigravity_auth.interceptor import _cleanup_old_traces
+            _cleanup_old_traces(traces_path, max_files=5)
+
+            remaining = list(traces_path.glob("trace-*.log"))
+            self.assertEqual(len(remaining), 5, f"Expected 5 files, got {len(remaining)}")
 
 
 class TestModelHeaderHelpers(unittest.TestCase):

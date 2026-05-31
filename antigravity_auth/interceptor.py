@@ -37,6 +37,9 @@ def _trace(event: str, **kwargs: Any) -> None:
     Creates one file per Hermes process (keyed by PID) under
     ``~/.hermes/antigravity-traces/`` so you can verify whether the
     httpx event hooks fire and what decisions the hook makes.
+
+    Trace files are created with private permissions (0o600) in a
+    private directory (0o700), matching the debug.py security discipline.
     """
     global _TRACE_DIR
     import time as _time
@@ -46,6 +49,22 @@ def _trace(event: str, **kwargs: Any) -> None:
             from .storage import get_hermes_home
             _TRACE_DIR = get_hermes_home() / "antigravity-traces"
             _TRACE_DIR.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(_TRACE_DIR, 0o700)
+            except Exception:
+                pass
+            _cleanup_old_traces(_TRACE_DIR, max_files=50)
+            # Repair permissions on existing trace files created before
+            # the 0o600 opener was added.
+            try:
+                for existing in _TRACE_DIR.iterdir():
+                    if existing.is_file() and existing.name.startswith("trace-"):
+                        try:
+                            os.chmod(existing, 0o600)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
         except Exception:
             return
 
@@ -55,8 +74,36 @@ def _trace(event: str, **kwargs: Any) -> None:
         trace_file = _TRACE_DIR / f"trace-{pid}.log"
         extra = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
         line = f"{ts:.3f} {event} {extra}\n"
-        with open(trace_file, "a") as f:
+        with open(trace_file, "a", opener=_private_trace_opener) as f:
             f.write(line)
+    except Exception:
+        pass
+
+
+def _private_trace_opener(path: str, flags: int) -> int:
+    """Open trace files with private permissions (0o600)."""
+    return os.open(path, flags | os.O_CREAT, 0o600)
+
+
+def _cleanup_old_traces(traces_dir: Any, max_files: int = 50) -> None:
+    """Remove oldest trace files when count exceeds max_files."""
+    try:
+        from pathlib import Path
+        traces_path = Path(traces_dir)
+        if not traces_path.is_dir():
+            return
+        files = [
+            f for f in traces_path.iterdir()
+            if f.is_file() and f.name.startswith("trace-") and f.name.endswith(".log")
+        ]
+        if len(files) <= max_files:
+            return
+        sorted_files = sorted(files, key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in sorted_files[max_files:]:
+            try:
+                f.unlink()
+            except Exception:
+                pass
     except Exception:
         pass
 
