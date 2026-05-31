@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 import httpx
@@ -25,6 +26,39 @@ logger = logging.getLogger(__name__)
 _PATCHED = False
 _ORIGINAL_INIT = None
 _ORIGINAL_WRAP_CODE_ASSIST = None
+_ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+
+_TRACE_DIR = None
+
+
+def _trace(event: str, **kwargs: Any) -> None:
+    """Write a trace marker to the interceptor debug log.
+
+    Creates one file per Hermes process (keyed by PID) under
+    ``~/.hermes/antigravity-traces/`` so you can verify whether the
+    httpx event hooks fire and what decisions the hook makes.
+    """
+    global _TRACE_DIR
+    import time as _time
+
+    if _TRACE_DIR is None:
+        try:
+            from .storage import get_hermes_home
+            _TRACE_DIR = get_hermes_home() / "antigravity-traces"
+            _TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return
+
+    try:
+        ts = _time.time()
+        pid = os.getpid()
+        trace_file = _TRACE_DIR / f"trace-{pid}.log"
+        extra = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
+        line = f"{ts:.3f} {event} {extra}\n"
+        with open(trace_file, "a") as f:
+            f.write(line)
+    except Exception:
+        pass
 
 
 def _model_family_for_model(model: str) -> str:
@@ -642,7 +676,14 @@ def _apply_claude_transforms(inner_request: dict) -> None:
 
 
 def _antigravity_request_hook(request: httpx.Request) -> None:
+    # ── trace: write to marker file so we know the hook fired ──
+    try:
+        _trace("hook-fired", url=str(request.url)[:120])
+    except Exception:
+        pass
+
     if "cloudcode-pa" not in str(request.url):
+        _trace("hook-skip", reason="url-no-cloudcode-pa")
         return
 
     config = get_config()
@@ -650,9 +691,11 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
     try:
         body = json.loads(request.read())
     except Exception:
+        _trace("hook-skip", reason="json-decode-failed")
         return
     
     if not isinstance(body, dict) or "request" not in body:
+        _trace("hook-skip", reason="no-request-key", body_keys=str(list(body.keys()) if isinstance(body, dict) else type(body).__name__))
         return
     
     model = str(body.get("model", ""))
@@ -1097,6 +1140,7 @@ def _send_with_antigravity_retry(original_send, request: httpx.Request, *args: A
 
 
 def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
+    _trace("wrap-http-client", id_hex=hex(id(http_client)))
     if not http_client.event_hooks.get("request"):
         http_client.event_hooks["request"] = []
     if not http_client.event_hooks.get("response"):
@@ -1109,6 +1153,7 @@ def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
         original_send = http_client.send
 
         def send_with_retry(request: httpx.Request, *args: Any, **kwargs: Any) -> httpx.Response:
+            _trace("send-with-retry-called", url=str(request.url)[:100])
             return _send_with_antigravity_retry(original_send, request, *args, **kwargs)
 
         http_client.send = send_with_retry  # type: ignore[method-assign]
@@ -1116,15 +1161,91 @@ def _wrap_http_client(http_client: httpx.Client) -> httpx.Client:
     return http_client
 
 
+_GLOBAL_HTTPX_HOOK_INSTALLED = False
+
+
+def _install_global_httpx_hook() -> None:
+    """Monkey-patch httpx.Client.send, .post, AND .stream to catch every request.
+
+    We've seen evidence that some code paths use httpx differently —
+    possibly through subclasses that override send/post.  Patching all
+    three entry-points guarantees interception.
+    """
+    global _GLOBAL_HTTPX_HOOK_INSTALLED
+    if _GLOBAL_HTTPX_HOOK_INSTALLED:
+        return
+    _GLOBAL_HTTPX_HOOK_INSTALLED = True
+
+    # ── Level 1: override send (catches internal Client usage) ──
+    _original_client_send = httpx.Client.send
+
+    def _global_send(client_self, request, *args, **kwargs):
+        _trace("global-send-called", url=str(request.url)[:120])
+        try:
+            _antigravity_request_hook(request)
+        except Exception:
+            pass
+        response = _original_client_send(client_self, request, *args, **kwargs)
+        try:
+            _antigravity_response_hook(response)
+        except Exception:
+            pass
+        return response
+
+    httpx.Client.send = _global_send  # type: ignore[method-assign]
+
+    # ── Level 2: override post — ensures post() routes through our overridden send() ──
+    _original_client_post = httpx.Client.post
+
+    def _global_post(client_self, url, *, json=None, content=None, data=None,
+                     files=None, headers=None, params=None, **kwargs):
+        request = client_self.build_request(
+            "POST", url, json=json, content=content, data=data,
+            files=files, headers=headers, params=params, **kwargs,
+        )
+        return client_self.send(request)
+
+    httpx.Client.post = _global_post  # type: ignore[method-assign]
+
+    # ── Level 3: override stream — ensures stream() routes through our overridden send() ──
+    _original_client_stream = httpx.Client.stream
+
+    def _global_stream(client_self, method, url, *, json=None, content=None,
+                       data=None, files=None, headers=None, params=None, **kwargs):
+        request = client_self.build_request(
+            method, url, json=json, content=content, data=data,
+            files=files, headers=headers, params=params, **kwargs,
+        )
+        return _original_client_stream(
+            client_self, method, url,
+            json=json, content=content, data=data,
+            files=files, headers=headers, params=params, **kwargs,
+        )
+
+    httpx.Client.stream = _global_stream  # type: ignore[method-assign]
+    _trace("global-httpx-hook-installed")
+
+
 def install() -> bool:
-  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST
+  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST, _ORIGINAL_ENSURE_PROJECT_CONTEXT
   if _PATCHED:
     return False
+
+  # ── Global safety net: wrap every httpx.Client so we catch requests
+  #     regardless of which subclass or code path creates them. ──
+  _install_global_httpx_hook()
+
   try:
     from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient, wrap_code_assist_request
   except ImportError:
+    _trace("install-fail", reason="import-error-gemini-cloudcode-adapter")
     return False
   _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
+  _ORIGINAL_ENSURE_PROJECT_CONTEXT = getattr(
+    GeminiCloudCodeClient,
+    "_ensure_project_context",
+    None,
+  )
   # Guard: if already patched by another plugin, don't chain
   if getattr(_ORIGINAL_INIT, '__name__', '') == '_patched_init':
     logger.warning("Interceptor already patched — skipping install")
@@ -1132,10 +1253,12 @@ def install() -> bool:
   _ORIGINAL_WRAP_CODE_ASSIST = wrap_code_assist_request
 
   def _patched_init(self, *args: Any, **kwargs: Any) -> None:
+    _trace("patched-init-called", cls=type(self).__name__)
     _ORIGINAL_INIT(self, *args, **kwargs)
     _wrap_http_client(self._http)
 
   def _patched_wrap_code_assist(*, project_id, model, inner_request, user_prompt_id=None):
+    _trace("patched-wrap-called", model=str(model)[:80])
     resolved_model = model
     if isinstance(model, str):
       try:
@@ -1153,10 +1276,52 @@ def install() -> bool:
       inner_request=inner_request, user_prompt_id=user_prompt_id,
     )
 
+  def _patched_ensure_project_context(self, access_token: str, model: str):
+    if getattr(self, "_project_context", None) is not None:
+      return self._project_context
+
+    env_project = ""
+    stored_project = ""
+    managed_project = ""
+    try:
+      from agent import google_oauth
+      env_project = google_oauth.resolve_project_id_from_env()
+      creds = google_oauth.load_credentials()
+      stored_project = getattr(creds, "project_id", "") if creds else ""
+      managed_project = getattr(creds, "managed_project_id", "") if creds else ""
+    except Exception as exc:
+      google_oauth = None
+      logger.debug("Could not read Hermes google_oauth project context: %s", exc)
+
+    from .project_context import resolve_antigravity_project_context
+
+    ctx = resolve_antigravity_project_context(
+      access_token,
+      configured_project_id=getattr(self, "_configured_project_id", "") or "",
+      env_project_id=env_project or "",
+      stored_project_id=stored_project or "",
+      managed_project_id=managed_project or "",
+    )
+
+    try:
+      if (getattr(ctx, "project_id", "") or getattr(ctx, "managed_project_id", "")) and google_oauth:
+        google_oauth.update_project_ids(
+          project_id=getattr(ctx, "project_id", "") or "",
+          managed_project_id=getattr(ctx, "managed_project_id", "") or "",
+        )
+    except Exception as exc:
+      logger.debug("Could not persist Antigravity project context to google_oauth store: %s", exc)
+
+    self._project_context = ctx
+    return ctx
+
   GeminiCloudCodeClient.__init__ = _patched_init
+  if _ORIGINAL_ENSURE_PROJECT_CONTEXT is not None:
+    GeminiCloudCodeClient._ensure_project_context = _patched_ensure_project_context
   import agent.gemini_cloudcode_adapter as gca
   gca.wrap_code_assist_request = _patched_wrap_code_assist
   _PATCHED = True
+  _trace("install-ok")
   logger.info("Antigravity interceptor installed (headers + tool_call id injection + response hooks)")
   return True
 
@@ -1169,7 +1334,7 @@ def uninstall() -> bool:
   """Restore original GeminiCloudCodeClient.__init__ and wrap_code_assist_request.
 
   Returns True if successfully uninstalled, False if not installed."""
-  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST
+  global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST, _ORIGINAL_ENSURE_PROJECT_CONTEXT
   if not _PATCHED:
     return False
   try:
@@ -1177,11 +1342,14 @@ def uninstall() -> bool:
     import agent.gemini_cloudcode_adapter as gca
     if _ORIGINAL_INIT is not None:
       GeminiCloudCodeClient.__init__ = _ORIGINAL_INIT
+    if _ORIGINAL_ENSURE_PROJECT_CONTEXT is not None:
+      GeminiCloudCodeClient._ensure_project_context = _ORIGINAL_ENSURE_PROJECT_CONTEXT
     if _ORIGINAL_WRAP_CODE_ASSIST is not None:
       gca.wrap_code_assist_request = _ORIGINAL_WRAP_CODE_ASSIST
     _PATCHED = False
     _ORIGINAL_INIT = None
     _ORIGINAL_WRAP_CODE_ASSIST = None
+    _ORIGINAL_ENSURE_PROJECT_CONTEXT = None
     logger.info("Antigravity interceptor uninstalled")
     return True
   except Exception as e:

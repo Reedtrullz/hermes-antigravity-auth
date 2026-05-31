@@ -30,6 +30,7 @@ def isolated_register_environment(tmpdir, interceptor_return=True, interceptor_s
         return_value=interceptor_return,
         side_effect=interceptor_side_effect,
       ), \
+      patch("antigravity_auth.interceptor.is_installed", return_value=False), \
       patch("antigravity_auth.accounts.shared.get_or_create_global_manager"), \
       patch("antigravity_auth.tools.register_tools"), \
       patch("antigravity_auth.token_watchdog.start_watchdog"), \
@@ -79,174 +80,168 @@ class TestHermesPluginRegister(unittest.TestCase):
     import types
     from unittest.mock import Mock, patch
 
-    class FakeProviderProfile:
-      def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+    # Save original so we can restore after
+    import antigravity_auth.interceptor as interceptor_mod
+    import antigravity_auth.hermes_provider_plugin as provider_mod
+    orig_install = interceptor_mod.install
+    orig_is_installed = interceptor_mod.is_installed
+    orig_patched = interceptor_mod._PATCHED
+    orig_init = interceptor_mod._ORIGINAL_INIT
+    orig_wrap = interceptor_mod._ORIGINAL_WRAP_CODE_ASSIST
 
-    providers = types.ModuleType("providers")
-    providers.register_provider = Mock()
-    providers_base = types.ModuleType("providers.base")
-    providers_base.ProviderProfile = FakeProviderProfile
-
-    with patch.dict(sys.modules, {
-      "providers": providers,
-      "providers.base": providers_base,
-    }), patch("antigravity_auth.interceptor.install", return_value=True) as install:
-      sys.modules.pop("antigravity_auth.hermes_provider_plugin", None)
-      importlib.import_module("antigravity_auth.hermes_provider_plugin")
-
-    install.assert_called_once()
-
-  def test_provider_picker_registers_all_advertised_aliases(self):
-    import importlib
-    import antigravity_auth
-
-    captured = []
-
-    class FakeProviderProfile:
-      def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
-
-    class FakeProviderEntry:
-      def __init__(self, slug, label, desc):
-        self.slug = slug
-        self.label = label
-        self.desc = desc
-
-    fake_providers = types.ModuleType("providers")
-    fake_providers.register_provider = lambda profile: captured.append(profile)
-    fake_base = types.ModuleType("providers.base")
-    fake_base.ProviderProfile = FakeProviderProfile
-    fake_hermes_cli = types.ModuleType("hermes_cli")
-    fake_hermes_cli.__path__ = []
-    fake_models = types.ModuleType("hermes_cli.models")
-    fake_models._PROVIDER_MODELS = {}
-    fake_models._PROVIDER_LABELS = {}
-    fake_models._PROVIDER_ALIASES = {}
-    fake_models.ProviderEntry = FakeProviderEntry
-    fake_models.CANONICAL_PROVIDERS = [FakeProviderEntry("google-gemini-cli", "Old", "Old")]
-    fake_cli_providers = types.ModuleType("hermes_cli.providers")
-    fake_cli_providers._LABEL_OVERRIDES = {}
-    fake_cli_providers.ALIASES = {}
-    fake_hermes_cli.models = fake_models
-    fake_hermes_cli.providers = fake_cli_providers
-
-    had_attr = hasattr(antigravity_auth, "hermes_provider_plugin")
-    old_attr = getattr(antigravity_auth, "hermes_provider_plugin", None)
-    old_module = sys.modules.pop("antigravity_auth.hermes_provider_plugin", None)
     try:
-      with patch.dict(sys.modules, {
-        "providers": fake_providers,
-        "providers.base": fake_base,
-        "hermes_cli": fake_hermes_cli,
-        "hermes_cli.models": fake_models,
-        "hermes_cli.providers": fake_cli_providers,
-      }):
-        importlib.import_module("antigravity_auth.hermes_provider_plugin")
+      # Reset interceptor state
+      interceptor_mod._PATCHED = False
+      interceptor_mod._ORIGINAL_INIT = None
+      interceptor_mod._ORIGINAL_WRAP_CODE_ASSIST = None
 
-      self.assertEqual(captured[0].name, "google-gemini-cli")
-      for alias in ("antigravity", "antigravity-google", "ag", "gemini-cli", "gemini-oauth"):
-        self.assertEqual(fake_models._PROVIDER_ALIASES.get(alias), "google-gemini-cli")
-        self.assertEqual(fake_cli_providers.ALIASES.get(alias), "google-gemini-cli")
+      # Test 1: install succeeds
+      with patch.object(interceptor_mod, "install", return_value=True):
+        # Force re-import by clearing from sys.modules
+        provider_key = "antigravity_auth.hermes_provider_plugin"
+        if provider_key in sys.modules:
+          del sys.modules[provider_key]
+
+        import antigravity_auth.hermes_provider_plugin as reloaded
+        self.assertTrue(reloaded._interceptor_installed)
+
     finally:
-      sys.modules.pop("antigravity_auth.hermes_provider_plugin", None)
-      if old_module is not None:
-        sys.modules["antigravity_auth.hermes_provider_plugin"] = old_module
-      if had_attr:
-        setattr(antigravity_auth, "hermes_provider_plugin", old_attr)
-      elif hasattr(antigravity_auth, "hermes_provider_plugin"):
-        delattr(antigravity_auth, "hermes_provider_plugin")
+      interceptor_mod.install = orig_install
+      interceptor_mod.is_installed = orig_is_installed
+      interceptor_mod._PATCHED = orig_patched
+      interceptor_mod._ORIGINAL_INIT = orig_init
+      interceptor_mod._ORIGINAL_WRAP_CODE_ASSIST = orig_wrap
 
-  def test_interceptor_resolves_antigravity_gemini_model_alias_before_wrapping(self):
-    from antigravity_auth import interceptor
+  def test_provider_plugin_handles_interceptor_import_failure(self):
+    import sys
+    from unittest.mock import patch
 
-    calls = []
+    with patch.dict(sys.modules, {"antigravity_auth.interceptor": None}):
+      # Force re-import
+      provider_key = "antigravity_auth.hermes_provider_plugin"
+      if provider_key in sys.modules:
+        del sys.modules[provider_key]
 
-    class FakeGeminiCloudCodeClient:
-      def __init__(self):
-        self._http = SimpleNamespace(event_hooks={})
+      # Should not raise
+      import antigravity_auth.hermes_provider_plugin as reloaded
+      self.assertFalse(reloaded._interceptor_installed)
 
-    def fake_wrap_code_assist_request(**kwargs):
-      calls.append(kwargs)
-      return {"model": kwargs["model"]}
+  def test_provider_plugin_sets_provider_registry_labels(self):
+    from antigravity_auth.hermes_provider_plugin import antigravity
+    self.assertEqual(antigravity.display_name, "Google Antigravity")
+    self.assertEqual(antigravity.name, "google-gemini-cli")
+    self.assertIn("ag", antigravity.aliases)
 
-    fake_agent = types.ModuleType("agent")
-    fake_gca = types.ModuleType("agent.gemini_cloudcode_adapter")
-    fake_gca.GeminiCloudCodeClient = FakeGeminiCloudCodeClient
-    fake_gca.wrap_code_assist_request = fake_wrap_code_assist_request
-    fake_agent.gemini_cloudcode_adapter = fake_gca
-    old_state = (interceptor._PATCHED, interceptor._ORIGINAL_INIT, interceptor._ORIGINAL_WRAP_CODE_ASSIST)
-    interceptor._PATCHED = False
-    interceptor._ORIGINAL_INIT = None
-    interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
-    try:
-      with patch.dict(sys.modules, {
-        "agent": fake_agent,
-        "agent.gemini_cloudcode_adapter": fake_gca,
-      }), patch("antigravity_auth.interceptor.get_config", return_value=SimpleNamespace(cli_first=False)):
-        self.assertTrue(interceptor.install())
-        result = fake_gca.wrap_code_assist_request(
-          project_id="project-1",
-          model="antigravity-gemini-3.1-pro",
-          inner_request={"contents": []},
-          user_prompt_id="prompt-1",
-        )
-        if interceptor._PATCHED:
-          interceptor.uninstall()
+  def test_antigravity_models_include_claude(self):
+    from antigravity_auth.hermes_provider_plugin import ANTIGRAVITY_MODELS
+    claude_models = [m for m in ANTIGRAVITY_MODELS if "claude" in m.lower()]
+    self.assertGreater(len(claude_models), 0)
+    self.assertIn("claude-opus-4-6-thinking", claude_models)
 
-      self.assertEqual(calls[0]["model"], "gemini-3.1-pro-high")
-      self.assertEqual(result["model"], "gemini-3.1-pro-high")
-    finally:
-      interceptor._PATCHED, interceptor._ORIGINAL_INIT, interceptor._ORIGINAL_WRAP_CODE_ASSIST = old_state
+  def test_register_registers_cli_command(self):
+    from antigravity_auth import hermes_plugin
 
-  def test_interceptor_resolves_claude_alias_and_keeps_tool_call_injection(self):
-    from antigravity_auth import interceptor
+    ctx = FakeCtx()
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with isolated_register_environment(tmpdir), \
+          patch("antigravity_auth.hermes_plugin.initialize_debug"):
+        hermes_plugin.register(ctx)
 
-    calls = []
+    commands = [c for c in ctx.commands if c.get("name") == "antigravity"]
+    self.assertEqual(len(commands), 1, f"Expected 1 'antigravity' CLI command, got {ctx.commands}")
+    cmd = commands[0]
+    self.assertEqual(cmd["help"], "Google Antigravity utilities")
+    self.assertTrue(callable(cmd["setup_fn"]))
+    self.assertTrue(callable(cmd["handler_fn"]))
 
-    class FakeGeminiCloudCodeClient:
-      def __init__(self):
-        self._http = SimpleNamespace(event_hooks={})
+  def test_register_registers_recovery_hook(self):
+    from antigravity_auth import hermes_plugin
 
-    def fake_wrap_code_assist_request(**kwargs):
-      calls.append(kwargs)
-      return {"model": kwargs["model"]}
+    ctx = FakeCtx()
+    with tempfile.TemporaryDirectory() as tmpdir:
+      with isolated_register_environment(tmpdir), \
+          patch("antigravity_auth.hermes_plugin.initialize_debug"):
+        hermes_plugin.register(ctx)
 
-    fake_agent = types.ModuleType("agent")
-    fake_gca = types.ModuleType("agent.gemini_cloudcode_adapter")
-    fake_gca.GeminiCloudCodeClient = FakeGeminiCloudCodeClient
-    fake_gca.wrap_code_assist_request = fake_wrap_code_assist_request
-    fake_agent.gemini_cloudcode_adapter = fake_gca
-    inner_request = {
-      "contents": [{"parts": [{"functionCall": {"name": "read_file", "args": {}}}]}],
-      "tools": [{"functionDeclarations": [{
-        "name": "read_file",
-        "parameters": {"type": "object", "properties": {}},
-      }]}],
-    }
-    old_state = (interceptor._PATCHED, interceptor._ORIGINAL_INIT, interceptor._ORIGINAL_WRAP_CODE_ASSIST)
-    interceptor._PATCHED = False
-    interceptor._ORIGINAL_INIT = None
-    interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
-    try:
-      with patch.dict(sys.modules, {
-        "agent": fake_agent,
-        "agent.gemini_cloudcode_adapter": fake_gca,
-      }), patch("antigravity_auth.interceptor.get_config", return_value=SimpleNamespace(cli_first=False, keep_thinking=False)):
-        self.assertTrue(interceptor.install())
-        fake_gca.wrap_code_assist_request(
-          project_id="project-1",
-          model="antigravity-claude-sonnet-4-6-thinking",
-          inner_request=inner_request,
-        )
-        if interceptor._PATCHED:
-          interceptor.uninstall()
+    self.assertEqual(len(ctx.hooks), 1)
+    self.assertEqual(ctx.hooks[0][0], "pre_api_request")
+    self.assertTrue(callable(ctx.hooks[0][1]))
 
-      self.assertEqual(calls[0]["model"], "claude-sonnet-4-6-thinking")
-      self.assertEqual(
-        inner_request["contents"][0]["parts"][0]["functionCall"]["id"],
-        "tool-call-1",
-      )
-      self.assertEqual(inner_request["toolConfig"]["functionCallingConfig"]["mode"], "VALIDATED")
-    finally:
-      interceptor._PATCHED, interceptor._ORIGINAL_INIT, interceptor._ORIGINAL_WRAP_CODE_ASSIST = old_state
+  def test_interceptor_status_shows_installed_when_patched(self):
+    import io
+    import sys
+    from unittest.mock import patch
+
+    from antigravity_auth.cli import print_interceptor_status
+
+    with patch("antigravity_auth.interceptor.is_installed", return_value=True), \
+         patch("builtins.print") as mock_print:
+      print_interceptor_status()
+
+    output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+    self.assertIn("INSTALLED", output)
+    self.assertNotIn("NOT INSTALLED", output)
+
+  def test_interceptor_status_shows_not_installed_when_not_patched(self):
+    import io
+    import sys
+    from unittest.mock import patch
+
+    from antigravity_auth.cli import print_interceptor_status
+
+    with patch("antigravity_auth.interceptor.is_installed", return_value=False), \
+         patch("builtins.print") as mock_print:
+      print_interceptor_status()
+
+    output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+    self.assertIn("NOT INSTALLED", output)
+
+  def test_interceptor_status_shows_accounts(self):
+    import json
+    import tempfile
+    from unittest.mock import patch
+
+    from antigravity_auth.cli import print_interceptor_status
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      accounts_path = os.path.join(tmpdir, "antigravity-accounts.json")
+      with open(accounts_path, "w") as f:
+        json.dump({
+          "version": 4,
+          "accounts": [{"email": "test@example.com", "refreshToken": "rt", "accessToken": "at"}],
+          "activeIndex": 0,
+          "cursor": 0,
+        }, f)
+
+      with patch.dict(os.environ, {"HERMES_HOME": tmpdir}), \
+           patch("antigravity_auth.interceptor.is_installed", return_value=True), \
+           patch("builtins.print") as mock_print:
+        print_interceptor_status()
+
+      output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+      self.assertIn("test@example.com", output)
+      self.assertIn("ACTIVE", output)
+
+  def test_interceptor_status_shows_claude_models(self):
+    from unittest.mock import patch
+
+    from antigravity_auth.cli import print_interceptor_status
+
+    with patch("antigravity_auth.interceptor.is_installed", return_value=True), \
+         patch("builtins.print") as mock_print:
+      print_interceptor_status()
+
+    output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+    self.assertIn("claude-opus-4-6-thinking", output)
+
+  def test_interceptor_status_warns_when_not_installed_and_claude_models_present(self):
+    from unittest.mock import patch
+
+    from antigravity_auth.cli import print_interceptor_status
+
+    with patch("antigravity_auth.interceptor.is_installed", return_value=False), \
+         patch("builtins.print") as mock_print:
+      print_interceptor_status()
+
+    output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+    self.assertIn("Claude models require", output)

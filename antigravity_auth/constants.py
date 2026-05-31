@@ -56,7 +56,7 @@ ANTIGRAVITY_LOAD_ENDPOINTS = [
     ANTIGRAVITY_ENDPOINT_AUTOPUSH,
 ]
 
-ANTIGRAVITY_VERSION_FALLBACK = "1.23.0"
+ANTIGRAVITY_VERSION_FALLBACK = "2.0.0"
 
 # Gemini CLI headers — DEPRECATED as of May 2026.
 # Google is sunsetting the Gemini CLI in favour of Antigravity CLI (agy).

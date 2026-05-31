@@ -45,8 +45,28 @@ def _load_file_credentials() -> tuple[str, str]:
   return client_id, client_secret
 
 
+def _load_bundled_credentials() -> tuple[str, str]:
+  """Load OAuth credentials from the bundled _credentials module (legacy fallback).
+
+  The _credentials.py file is gitignored and not shipped in published wheels,
+  but source/git checkouts may include one with placeholder or dev credentials.
+  This is consulted only after env vars and the external JSON file are both absent.
+  """
+  try:
+    from . import _credentials as _bundled  # type: ignore[attr-defined]
+  except ImportError:
+    try:
+      import _credentials as _bundled  # type: ignore[import-not-found]
+    except ImportError:
+      return "", ""
+  return (
+    _strip(getattr(_bundled, "ANTIGRAVITY_CLIENT_ID", "")),
+    _strip(getattr(_bundled, "ANTIGRAVITY_CLIENT_SECRET", "")),
+  )
+
+
 def resolve_oauth_credentials() -> tuple[str, str]:
-  """Resolve OAuth credentials with per-field env override precedence."""
+  """Resolve OAuth credentials with precedence: env > JSON file > bundled."""
   env_client_id = os.environ.get("ANTIGRAVITY_CLIENT_ID", "").strip()
   env_client_secret = os.environ.get("ANTIGRAVITY_CLIENT_SECRET", "").strip()
 
@@ -54,4 +74,7 @@ def resolve_oauth_credentials() -> tuple[str, str]:
     return env_client_id, env_client_secret
 
   file_client_id, file_client_secret = _load_file_credentials()
-  return env_client_id or file_client_id, env_client_secret or file_client_secret
+  if file_client_id and file_client_secret:
+    return file_client_id, file_client_secret
+
+  return _load_bundled_credentials()

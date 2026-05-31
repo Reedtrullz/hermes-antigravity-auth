@@ -530,7 +530,7 @@ class TestRequestHook(unittest.TestCase):
             index = 0
             fingerprint = {
                 "userAgent": "UA/account-0",
-                "clientMetadata": {"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "GEMINI"},
+                "clientMetadata": {"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "ANTIGRAVITY"},
             }
 
         config = type("Config", (), {
@@ -626,7 +626,7 @@ class TestRequestHook(unittest.TestCase):
         generated = {
             "userAgent": "UA/generated",
             "apiClient": "google-cloud-sdk vscode/1.96.0",
-            "clientMetadata": {"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "GEMINI"},
+            "clientMetadata": {"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "ANTIGRAVITY"},
             "createdAt": 123,
         }
         account = FakeAccount()
@@ -651,7 +651,7 @@ class TestRequestHook(unittest.TestCase):
             index = 0
             fingerprint = {
                 "userAgent": "UA/old-version",
-                "clientMetadata": {"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "GEMINI"},
+                "clientMetadata": {"ideType": "ANTIGRAVITY", "platform": "MACOS", "pluginType": "ANTIGRAVITY"},
             }
 
         class FakeManager:
@@ -797,6 +797,100 @@ class TestRequestHook(unittest.TestCase):
         r.read()
         self.hook(r)
         self.assertEqual(r.headers.get("content-type", ""), "application/json")
+
+
+class TestInstallProjectContextPatch(unittest.TestCase):
+
+    def test_install_patches_ensure_project_context_to_antigravity_resolver(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import antigravity_auth.interceptor as interceptor
+
+        class FakeGeminiCloudCodeClient:
+            def __init__(self):
+                self._http = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, request=request)))
+                self._project_context = None
+                self._configured_project_id = "configured-project"
+
+            def _ensure_project_context(self, access_token, model):
+                return "native"
+
+        def fake_wrap_code_assist_request(**kwargs):
+            return kwargs
+
+        updates = []
+        fake_google_oauth = types.ModuleType("agent.google_oauth")
+        fake_google_oauth.resolve_project_id_from_env = lambda: "env-project"
+        fake_google_oauth.load_credentials = lambda: SimpleNamespace(
+            project_id="stored-project",
+            managed_project_id="managed-project",
+        )
+        fake_google_oauth.update_project_ids = lambda **kwargs: updates.append(kwargs)
+
+        fake_gca = types.ModuleType("agent.gemini_cloudcode_adapter")
+        fake_gca.GeminiCloudCodeClient = FakeGeminiCloudCodeClient
+        fake_gca.wrap_code_assist_request = fake_wrap_code_assist_request
+
+        fake_agent = types.ModuleType("agent")
+        fake_agent.google_oauth = fake_google_oauth
+        fake_agent.gemini_cloudcode_adapter = fake_gca
+
+        original_state = (
+            interceptor._PATCHED,
+            interceptor._ORIGINAL_INIT,
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST,
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT,
+        )
+        interceptor._PATCHED = False
+        interceptor._ORIGINAL_INIT = None
+        interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
+        interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+
+        resolved_calls = []
+        resolved_ctx = SimpleNamespace(
+            project_id="resolved-project",
+            managed_project_id="",
+            tier_id="standard-tier",
+            source="test",
+        )
+
+        def fake_resolve(access_token, **kwargs):
+            resolved_calls.append((access_token, kwargs))
+            return resolved_ctx
+
+        try:
+            with patch.dict(sys.modules, {
+                "agent": fake_agent,
+                "agent.google_oauth": fake_google_oauth,
+                "agent.gemini_cloudcode_adapter": fake_gca,
+            }), patch("antigravity_auth.interceptor._install_global_httpx_hook"), patch(
+                "antigravity_auth.interceptor._wrap_http_client",
+                side_effect=lambda client: client,
+            ), patch(
+                "antigravity_auth.project_context.resolve_antigravity_project_context",
+                side_effect=fake_resolve,
+            ):
+                self.assertTrue(interceptor.install())
+                client = FakeGeminiCloudCodeClient()
+                ctx = client._ensure_project_context("access-token", "claude-sonnet-4-6")
+                self.assertIs(ctx, resolved_ctx)
+                self.assertEqual(resolved_calls, [("access-token", {
+                    "configured_project_id": "configured-project",
+                    "env_project_id": "env-project",
+                    "stored_project_id": "stored-project",
+                    "managed_project_id": "managed-project",
+                })])
+                self.assertEqual(updates, [{
+                    "project_id": "resolved-project",
+                    "managed_project_id": "",
+                }])
+                self.assertTrue(interceptor.uninstall())
+                self.assertEqual(FakeGeminiCloudCodeClient._ensure_project_context(client, "access-token", "model"), "native")
+        finally:
+            interceptor._PATCHED = original_state[0]
+            interceptor._ORIGINAL_INIT = original_state[1]
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = original_state[2]
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = original_state[3]
 
 
 class TestRetryWrapper(unittest.TestCase):

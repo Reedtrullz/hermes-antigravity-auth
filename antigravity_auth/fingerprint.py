@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from ._time_utils import now_ms
+from .constants import ANTIGRAVITY_VERSION_FALLBACK
 
 
 PLATFORM_CHOICES = ["darwin", "win32"]
@@ -54,14 +55,19 @@ def generate_fingerprint() -> dict[str, Any]:
   ide_type = "ANTIGRAVITY"
   sdk_client = _random_from(SDK_CLIENTS)
 
+  # Electron-style UA — Antigravity backend expects full Chrome/Electron UA,
+  # not the short "antigravity/1.18.3 platform/arch" form.
+  chrome_major = random.randint(130, 140)
+  electron_major = random.randint(32, 38)
+  if platform == "darwin":
+    os_ua = f"Macintosh; Intel Mac OS X {os_version.replace('.', '_')}"
+  else:
+    os_ua = f"Windows NT {os_version.split('.')[0]}.{os_version.split('.')[1]}; Win64; x64"
   user_agent = (
-    f"Mozilla/5.0 (Macintosh; Intel Mac OS X {os_version}) "
-    f"AppleWebKit/537.36 (KHTML, like Gecko) "
-    f"Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36"
-  ) if platform == "darwin" else (
-    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    f"AppleWebKit/537.36 (KHTML, like Gecko) "
-    f"Antigravity/1.18.3 Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36"
+    f"Mozilla/5.0 ({os_ua}) AppleWebKit/537.36 "
+    f"(KHTML, like Gecko) Antigravity/{ANTIGRAVITY_VERSION_FALLBACK} "
+    f"Chrome/{chrome_major}.0.7204.235 "
+    f"Electron/{electron_major}.3.1 Safari/537.36"
   )
 
   return {
@@ -73,7 +79,7 @@ def generate_fingerprint() -> dict[str, Any]:
       "ideType": ide_type,
       "platform": _platform_to_display_name(platform),
       "pluginType": "GEMINI",
-    },
+      },
     "createdAt": now_ms(),
   }
 
@@ -82,6 +88,9 @@ def update_fingerprint_version(fingerprint: dict[str, Any]) -> bool:
   """Ensure the fingerprint has the current version fields.
 
   Returns True if the fingerprint was modified.
+
+  Repairs fingerprints from older plugin versions. Current Antigravity IDE
+  fingerprints use ``ideType: ANTIGRAVITY`` paired with ``pluginType: GEMINI``.
   """
   changed = False
   if "createdAt" not in fingerprint:
@@ -90,6 +99,39 @@ def update_fingerprint_version(fingerprint: dict[str, Any]) -> bool:
   if "apiClient" not in fingerprint:
     fingerprint["apiClient"] = _random_from(SDK_CLIENTS)
     changed = True
+
+  # Ensure clientMetadata exists with correct pluginType.
+  # The Antigravity backend expects pluginType: GEMINI paired with
+  # ideType: ANTIGRAVITY (matching the Antigravity IDE's fingerprint).
+  cm = fingerprint.get("clientMetadata")
+  if isinstance(cm, dict):
+    if cm.get("pluginType") != "GEMINI":
+      cm["pluginType"] = "GEMINI"
+      changed = True
+  else:
+    # Missing clientMetadata entirely — generate it
+    platform = _platform_to_display_name(
+      "win32" if "Windows" in str(fingerprint.get("userAgent", ""))
+      else "darwin"
+    )
+    fingerprint["clientMetadata"] = {
+      "ideType": "ANTIGRAVITY",
+      "platform": platform,
+      "pluginType": "GEMINI",
+    }
+    changed = True
+
+  # Repair outdated Antigravity version in the userAgent string.
+  # The backend rejects versions older than 2.0.0 with a deprecation warning.
+  ua = fingerprint.get("userAgent", "")
+  if isinstance(ua, str) and "Antigravity/" in ua:
+    import re
+    old_ver = re.search(r"Antigravity/([\d.]+)", ua)
+    if old_ver and old_ver.group(1) != ANTIGRAVITY_VERSION_FALLBACK:
+      new_ua = ua[: old_ver.start()] + f"Antigravity/{ANTIGRAVITY_VERSION_FALLBACK}" + ua[old_ver.end() :]
+      fingerprint["userAgent"] = new_ua
+      changed = True
+
   return changed
 
 

@@ -7,8 +7,6 @@ from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
-from antigravity_auth.storage import get_hermes_home
-
 
 logger = logging.getLogger(__name__)
 
@@ -379,6 +377,7 @@ def get_config(force_reload: bool = False) -> Config:
 
     config = DEFAULT_CONFIG
 
+    from antigravity_auth.storage import get_hermes_home
     yaml_path = get_hermes_home() / "config.yaml"
     yaml_config = load_config_from_yaml(yaml_path)
     if yaml_config is not None:

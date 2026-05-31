@@ -50,7 +50,7 @@ class TestGenerateFingerprint(unittest.TestCase):
 
     def test_user_agent_contains_antigravity(self):
         fp = generate_fingerprint()
-        self.assertIn("Antigravity", fp["userAgent"])
+        self.assertIn("antigravity", fp["userAgent"].lower())
 
 
 class TestBuildFingerprintHeaders(unittest.TestCase):
@@ -107,6 +107,26 @@ class TestUpdateFingerprintVersion(unittest.TestCase):
             "deviceId": "test-id",
             "apiClient": "test-client",
             "createdAt": 1234567890.0,
+            "clientMetadata": {
+                "ideType": "ANTIGRAVITY",
+                "platform": "MACOS",
+                "pluginType": "GEMINI",
+            },
         }
         changed = update_fingerprint_version(fp)
         self.assertFalse(changed)
+
+    def test_repairs_non_gemini_plugintype(self):
+        fp = {
+            "deviceId": "test-id",
+            "apiClient": "test-client",
+            "createdAt": 1234567890.0,
+            "clientMetadata": {
+                "ideType": "ANTIGRAVITY",
+                "platform": "MACOS",
+                "pluginType": "ANTIGRAVITY",
+            },
+        }
+        changed = update_fingerprint_version(fp)
+        self.assertTrue(changed)
+        self.assertEqual(fp["clientMetadata"]["pluginType"], "GEMINI")

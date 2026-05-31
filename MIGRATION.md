@@ -195,7 +195,15 @@ hermes antigravity login
 
 ### 403 Permission denied
 
-Ensure each account has a `projectId` set in `antigravity-accounts.json`:
+If Google returns `FREE_TIER_USER_NOT_ELIGIBLE`, the account is not eligible for
+Antigravity free-tier onboarding. Set a GCP project ID for the account so the
+plugin can use Google's reported `standard-tier` path:
+
+```bash
+hermes antigravity set-project <email_or_index> <project_id>
+```
+
+This writes the same `projectId` field in `antigravity-accounts.json`:
 
 ```json
 {

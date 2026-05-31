@@ -29,13 +29,18 @@ def register(ctx):
   # route through Antigravity's transform pipeline.
   try:
     from .interceptor import install as install_interceptor
-    installed = install_interceptor()
-    if installed:
-      logger.info("Antigravity interceptor install result: %s", installed)
+    from .interceptor import is_installed as interceptor_is_installed
+    if interceptor_is_installed():
+      logger.debug("Antigravity interceptor already installed (by provider plugin)")
     else:
-      logger.warning(
-        "Antigravity interceptor was not installed; plugin loaded without HTTP interception"
-      )
+      installed = install_interceptor()
+      if installed:
+        logger.info("Antigravity interceptor installed (by CLI plugin)")
+      else:
+        logger.warning(
+          "Antigravity interceptor could not be installed; "
+          "plugin loaded without HTTP interception"
+        )
   except Exception as e:
     logger.warning("Antigravity interceptor install failed: %s", e)
 

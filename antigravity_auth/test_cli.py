@@ -9,7 +9,13 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 
 from .storage import get_hermes_home
-from .cli import check_quotas_and_verify, delete_account, interactive_accounts_menu, run_login_flow
+from .cli import (
+    check_quotas_and_verify,
+    delete_account,
+    interactive_accounts_menu,
+    run_login_flow,
+    set_account_project,
+)
 from . import cli as cli_module
 
 class TestCli(unittest.TestCase):
@@ -461,6 +467,73 @@ class TestCli(unittest.TestCase):
         self.assertEqual(kwargs.get("project_id"), "")
         self.assertIsNone(kwargs.get("email"))
         self.assertFalse(kwargs.get("set_active"))
+
+    def test_set_account_project_updates_account_and_syncs_active_runtime(self):
+        from .storage import load_accounts, save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "",
+                "managedProjectId": "old-managed",
+                "accessToken": "cached-access",
+                "accessTokenExpiresAt": 9999999999,
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+            "cursor": 0,
+        })
+
+        with patch("antigravity_auth.token.refresh_access_token", return_value={
+            "access": "fresh-access",
+            "refresh": "raw-refresh|project-123",
+            "expires": 123,
+        }) as refresh, patch(
+            "antigravity_auth.cli.sync_token_to_all_auth_stores",
+            return_value=True,
+        ) as sync:
+            self.assertTrue(set_account_project("0", "project-123"))
+
+        loaded = load_accounts()
+        self.assertEqual(loaded["accounts"][0]["projectId"], "project-123")
+        self.assertEqual(loaded["accounts"][0]["managedProjectId"], "")
+        refresh.assert_called_once_with(
+            {"refresh": "raw-refresh|project-123", "email": "user@example.com"},
+            persist=True,
+            set_active=True,
+        )
+        sync.assert_called_once_with(
+            access_token="fresh-access",
+            refresh_token="raw-refresh|project-123",
+            project_id="project-123",
+            email="user@example.com",
+            expires_ms=123,
+            set_active=True,
+        )
+
+    def test_set_account_project_does_not_sync_inactive_account(self):
+        from .storage import load_accounts, save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [
+                {"email": "active@example.com", "refreshToken": "active-refresh", "projectId": "active-project"},
+                {"email": "inactive@example.com", "refreshToken": "inactive-refresh", "projectId": ""},
+            ],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+            "cursor": 0,
+        })
+
+        with patch("antigravity_auth.token.refresh_access_token") as refresh, patch(
+            "antigravity_auth.cli.sync_token_to_all_auth_stores",
+        ) as sync:
+            self.assertTrue(set_account_project("inactive@example.com", "project-456"))
+
+        loaded = load_accounts()
+        self.assertEqual(loaded["accounts"][1]["projectId"], "project-456")
+        refresh.assert_not_called()
+        sync.assert_not_called()
 
     def test_check_quotas_refreshes_with_packed_project_id(self):
         from .storage import save_accounts

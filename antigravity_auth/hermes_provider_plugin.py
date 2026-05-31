@@ -4,8 +4,35 @@ from __future__ import annotations
 
 import os
 
-from providers import register_provider
-from providers.base import ProviderProfile
+try:
+  from providers import register_provider
+  from providers.base import ProviderProfile
+except Exception:
+  from dataclasses import dataclass, field
+  from typing import Any
+
+  @dataclass
+  class ProviderProfile:
+    name: str
+    api_mode: str = "chat_completions"
+    aliases: tuple = ()
+    display_name: str = ""
+    description: str = ""
+    signup_url: str = ""
+    env_vars: tuple = ()
+    base_url: str = ""
+    models_url: str = ""
+    auth_type: str = "api_key"
+    supports_health_check: bool = True
+    fallback_models: tuple = ()
+    hostname: str = ""
+    default_headers: dict[str, str] = field(default_factory=dict)
+    fixed_temperature: Any = None
+    default_max_tokens: int | None = None
+    default_aux_model: str = ""
+
+  def register_provider(profile: ProviderProfile) -> None:
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -160,9 +187,30 @@ try:
 except Exception:
   pass
 
+_interceptor_installed = False
+
 try:
   from .interceptor import install as _install_interceptor
 
-  _install_interceptor()
-except Exception:
-  pass
+  _interceptor_installed = _install_interceptor()
+except Exception as _exc:
+  import logging
+  _logger = logging.getLogger(__name__)
+  _logger.error(
+    "Antigravity HTTP interceptor failed to install. "
+    "Claude models will not work through Antigravity. "
+    "Error: %s",
+    _exc,
+    exc_info=True,
+  )
+
+# Warn loudly if interceptor failed to install — Claude models require it.
+if not _interceptor_installed:
+  import logging
+  _logger = logging.getLogger(__name__)
+  _logger.warning(
+    "Antigravity HTTP interceptor is NOT installed. "
+    "Gemini models may work via Code Assist, but Claude models require the "
+    "interceptor for Antigravity header/response transformation. "
+    "Run 'hermes antigravity status' to diagnose."
+  )

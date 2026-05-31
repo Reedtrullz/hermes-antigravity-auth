@@ -410,6 +410,7 @@ hermes antigravity login  # Run again to add more accounts
 ```bash
 hermes antigravity accounts    # Interactive account console
 hermes antigravity list        # List accounts
+hermes antigravity set-project <email_or_index> <project_id>
 hermes antigravity check       # Check quota status
 hermes antigravity doctor      # Diagnose install/config/auth state
 ```
@@ -475,10 +476,18 @@ ls ~/.hermes/plugins/model-providers/antigravity/
 ### 403 Permission Denied
 
 403 can mean the current Google account is blocked/shadow-banned for this
-surface, or that project access is missing for the selected header style. For
-the deprecated Gemini CLI header style, you may need:
+surface, or that project access is missing for the selected header style. If
+Google returns `FREE_TIER_USER_NOT_ELIGIBLE`, the account is not eligible for
+Antigravity free-tier onboarding. If Google reports `standard-tier` as allowed,
+set a GCP project ID for that account:
+
+```bash
+hermes antigravity set-project <email_or_index> <project_id>
+```
+
+For the deprecated Gemini CLI header style, you may also need:
 1. A Google Cloud project with the **Gemini for Google Cloud API** enabled
-2. Set `projectId` in `~/.hermes/antigravity-accounts.json`
+2. Set `projectId` with `hermes antigravity set-project`
 
 ### Session Recovery
 

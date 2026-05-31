@@ -32,7 +32,12 @@ from typing import cast
 
 from .auth_sync import sync_token_to_all_auth_stores, sync_token_to_google_oauth
 from .oauth import authorize_antigravity, exchange_antigravity
-from .storage import load_accounts, normalize_active_indices_after_explicit_switch, update_accounts
+from .storage import (
+    load_accounts,
+    normalize_active_indices_after_explicit_switch,
+    resolve_active_account_index,
+    update_accounts,
+)
 from .token import format_refresh_parts, parse_refresh_parts
 
 
@@ -569,6 +574,132 @@ def delete_account(email_or_index: str) -> bool:
     return True
 
 
+def _find_account_index(accounts: list, email_or_index: str) -> int | None:
+    if email_or_index.isdigit():
+        idx = int(email_or_index)
+        if 0 <= idx < len(accounts):
+            return idx
+        return None
+    for idx, acc in enumerate(accounts):
+        if isinstance(acc, dict) and acc.get("email") == email_or_index:
+            return idx
+    return None
+
+
+def _account_is_runtime_active(accounts_data: dict, account_index: int) -> bool:
+    if resolve_active_account_index(accounts_data) == account_index:
+        return True
+    family_map = accounts_data.get("activeIndexByFamily")
+    if isinstance(family_map, dict):
+        return account_index in (
+            family_map.get("claude"),
+            family_map.get("gemini"),
+        )
+    return False
+
+
+def _reload_global_account_manager() -> None:
+    try:
+        from .accounts.shared import get_global_manager
+        manager = get_global_manager()
+        if manager is not None:
+            manager.reload_from_disk()
+    except Exception:
+        pass
+
+
+def set_account_project(email_or_index: str, project_id: str) -> bool:
+    project_id = (project_id or "").strip()
+    if not project_id:
+        print("Project ID is required.")
+        return False
+
+    state: dict[str, object] = {
+        "found": False,
+        "index": None,
+        "account": None,
+        "runtime_active": False,
+    }
+
+    def set_project(accounts_data: dict) -> None:
+        accounts = accounts_data.get("accounts", [])
+        if not isinstance(accounts, list) or not accounts:
+            return
+        idx = _find_account_index(accounts, email_or_index)
+        if idx is None:
+            return
+        account = accounts[idx]
+        if not isinstance(account, dict):
+            return
+        account["projectId"] = project_id
+        account["managedProjectId"] = ""
+        state["found"] = True
+        state["index"] = idx
+        state["account"] = dict(account)
+        state["runtime_active"] = _account_is_runtime_active(accounts_data, idx)
+
+    updated = update_accounts(set_project)
+    if not state["found"]:
+        accounts = updated.get("accounts", [])
+        if not accounts:
+            print("No accounts registered.")
+        else:
+            print(f"Account '{email_or_index}' not found.")
+        return False
+
+    _reload_global_account_manager()
+
+    account = state["account"] if isinstance(state["account"], dict) else {}
+    email = account.get("email")
+    refresh_token = account.get("refreshToken") or ""
+    packed_refresh = format_refresh_parts({
+        "refreshToken": refresh_token,
+        "projectId": project_id,
+        "managedProjectId": "",
+    })
+
+    synced = False
+    if bool(state["runtime_active"]):
+        access_token = account.get("accessToken") or account.get("access") or ""
+        expires_ms = account.get("accessTokenExpiresAt") or account.get("expiresMs") or account.get("expires")
+        refresh_for_sync = packed_refresh
+
+        try:
+            from .token import refresh_access_token
+            refreshed = refresh_access_token(
+                {"refresh": packed_refresh, "email": email},
+                persist=True,
+                set_active=True,
+            )
+            if refreshed.get("access"):
+                access_token = refreshed.get("access") or access_token
+                expires_ms = refreshed.get("expires", expires_ms)
+                refresh_for_sync = refreshed.get("refresh") or packed_refresh
+        except Exception as exc:
+            print(f"WARNING: Project saved, but active token refresh failed: {exc}")
+
+        if access_token:
+            sync_result = sync_token_to_all_auth_stores(
+                access_token=access_token,
+                refresh_token=refresh_for_sync,
+                project_id=project_id,
+                email=email if isinstance(email, str) else None,
+                expires_ms=expires_ms if isinstance(expires_ms, int) else None,
+                set_active=True,
+            )
+            _print_runtime_auth_sync_warnings(sync_result, "updated project")
+            synced = _auth_sync_auth_json_ok(sync_result)
+        else:
+            print("WARNING: Project saved, but no active access token was available to sync Hermes runtime credentials.")
+
+    print(f"Set project for {email or email_or_index}: {project_id}")
+    if not bool(state["runtime_active"]):
+        print("Note: account is not currently active; switch to it before using this project.")
+    elif synced:
+        print("Hermes runtime credentials updated.")
+    return True
+
+
 def check_quotas_and_verify():
     accounts_data = load_accounts()
     accounts = accounts_data.get("accounts", [])
@@ -656,8 +787,9 @@ def interactive_accounts_menu():
             print("4. Delete account")
             print("5. Verify accounts & status")
             print("6. Exit")
+            print("7. Set account project ID")
             
-            choice = input("\nSelect an option [1-6]: ").strip()
+            choice = input("\nSelect an option [1-7]: ").strip()
             if not choice:
                 continue
 
@@ -761,12 +893,107 @@ def interactive_accounts_menu():
             elif choice == "6":
                 print("Exiting console.")
                 break
+            elif choice == "7":
+                list_accounts()
+                target = input("Enter email or index to update: ").strip()
+                project = input("Enter Google Cloud Project ID: ").strip()
+                if target and project:
+                    set_account_project(target, project)
             else:
                 print("Invalid option. Please try again.")
         except KeyboardInterrupt:
             print("\nExiting console.")
             break
 
+
+def print_interceptor_status():
+    """Print the Antigravity interceptor installation status and model availability."""
+    print("Antigravity Interceptor Status")
+    print("==============================")
+    print()
+
+    # Check interceptor installation
+    print("--- HTTP Interceptor ---")
+    try:
+        from . import interceptor
+        installed = interceptor.is_installed()
+        if installed:
+            print("  Status:    INSTALLED (headers + auth + request transformation active)")
+        else:
+            print("  Status:    NOT INSTALLED")
+            print("  Impact:    Claude models will NOT work through Antigravity")
+            print("             (requests go through Code Assist which checks eligibility)")
+    except Exception as exc:
+        print(f"  Status:    ERROR importing interceptor: {exc}")
+        installed = False
+
+    # Check if Hermes adapter symbols are importable
+    print()
+    print("--- Hermes Integration ---")
+    try:
+        from agent.gemini_cloudcode_adapter import (
+            GeminiCloudCodeClient,
+            wrap_code_assist_request,
+            CODE_ASSIST_ENDPOINT,
+        )
+        print(f"  Adapter:   GeminiCloudCodeClient available")
+        print(f"  Endpoint:  {CODE_ASSIST_ENDPOINT}")
+        adapter_ok = True
+    except ImportError as exc:
+        print(f"  Adapter:   NOT importable ({exc})")
+        print("  Impact:    Interceptor cannot install without the Hermes adapter")
+        adapter_ok = False
+    except Exception as exc:
+        print(f"  Adapter:   Error: {exc}")
+        adapter_ok = False
+
+    if adapter_ok and not installed:
+        print()
+        print("  The interceptor module is loadable but not installed in this process.")
+        print("  In a live Hermes session, the plugin installs the interceptor at startup.")
+        print("  Run this command from within Hermes to check the live state:")
+        print()
+        print("    /terminal hermes antigravity status")
+        print()
+        print("  Or check Hermes logs for interceptor messages:")
+        print("    grep -i interceptor ~/.hermes/logs/gateway.log")
+
+    # Check accounts
+    print()
+    print("--- Accounts ---")
+    try:
+        from .storage import load_accounts
+        data = load_accounts()
+        accounts = data.get("accounts", [])
+        active_idx = data.get("activeIndex", 0)
+        print(f"  Accounts:  {len(accounts)} configured")
+        for i, a in enumerate(accounts):
+            marker = " ← ACTIVE" if i == active_idx else ""
+            email = a.get("email", "unknown")
+            has_refresh = bool(a.get("refreshToken"))
+            has_access = bool(a.get("accessToken"))
+            print(f"    [{i}] {email}{marker}  refresh={'✓' if has_refresh else '✗'} access={'✓' if has_access else '✗'}")
+    except Exception as exc:
+        print(f"  Accounts:  Error loading: {exc}")
+
+    # Model availability
+    print()
+    print("--- Models ---")
+    try:
+        from .hermes_provider_plugin import ANTIGRAVITY_MODELS
+        claude_models = [m for m in ANTIGRAVITY_MODELS if "claude" in m.lower()]
+        gemini_models = [m for m in ANTIGRAVITY_MODELS if "gemini" in m.lower()]
+        print(f"  Claude:    {', '.join(claude_models)}")
+        print(f"  Gemini:    {', '.join(gemini_models)}")
+        if not installed and claude_models:
+            print()
+            print("  ⚠️  Claude models require the HTTP interceptor to be installed.")
+            print("     Without it, requests go through Code Assist which may return 403.")
+            print("     Run 'hermes antigravity doctor' for full diagnostics.")
+    except Exception as exc:
+        print(f"  Models:    Error: {exc}")
+
+    print()
 
 def setup_cli(parser):
     subparsers = parser.add_subparsers(dest="action", help="Antigravity actions")
@@ -782,9 +1009,14 @@ def setup_cli(parser):
     subparsers.add_parser("quota", help="Verify accounts and show quota status")
     subparsers.add_parser("check", help="Verify accounts and show quota status")
     subparsers.add_parser("doctor", help="Run Antigravity installation and auth diagnostics")
-    
+    subparsers.add_parser("status", help="Show interceptor status and model availability")
+
     delete_parser = subparsers.add_parser("delete", help="Delete a saved account")
     delete_parser.add_argument("email_or_index", help="Email address or account index to remove")
+
+    project_parser = subparsers.add_parser("set-project", help="Set GCP project ID for a saved account")
+    project_parser.add_argument("email_or_index", help="Email address or account index to update")
+    project_parser.add_argument("project_id", help="Google Cloud project ID to use for Antigravity standard tier")
 
 
 def handle_cli(args):
@@ -797,11 +1029,15 @@ def handle_cli(args):
             list_accounts()
         elif args.action == "delete":
             delete_account(args.email_or_index)
+        elif args.action == "set-project":
+            set_account_project(args.email_or_index, args.project_id)
         elif args.action in ("quota", "check"):
             check_quotas_and_verify()
         elif args.action == "doctor":
             from .doctor import print_doctor
             print_doctor()
+        elif args.action == "status":
+            print_interceptor_status()
         else:
             interactive_accounts_menu()
     except KeyboardInterrupt:
