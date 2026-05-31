@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hermes-antigravity-auth"
-version = "1.6.0"
+version = "1.7.0"
 description = "Hermes Agent plugin for Antigravity (Google IDE) OAuth model access"
 readme = "README.md"
 license = "MIT"

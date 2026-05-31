@@ -581,7 +581,7 @@ hermes-antigravity-auth/
 ├── plugins/
 │   ├── model-providers/     # Hermes model provider plugin
 │   └── antigravity_tools/   # Hermes CLI plugin
-├── pyproject.toml           # Python package config (v1.6.0)
+├── pyproject.toml           # Python package config (v1.7.0)
 ├── MIGRATION.md             # OpenCode → Hermes migration guide
 └── README.md                # This file
 ```

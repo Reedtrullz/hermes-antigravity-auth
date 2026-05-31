@@ -2,13 +2,14 @@
 
 All notable changes to hermes-antigravity-auth.
 
-## [Unreleased] — 2026-05-28
+## [1.7.0] — 2026-05-31
 
 ### Added
 - Package build guard rejects local `antigravity_auth/_credentials.py` so wheels/sdists cannot accidentally include private OAuth client credentials.
 - Safe OAuth credential resolver supports environment variables and external `~/.hermes/antigravity-credentials.json` without relying on package-tree secrets.
 - Account-manager helper resolves the request-selected account by safe index for response-hook bookkeeping.
 - Process file locks serialize account-store writes and `auth.json` read-modify-write updates across Hermes processes.
+- Test suite mocks bundled credentials fallback so tests pass reliably in CI checkouts.
 
 ### Changed
 - GitHub Actions CI now uses Node 24-capable `actions/checkout@v6` and `actions/setup-python@v6`.
