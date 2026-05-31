@@ -1212,11 +1212,11 @@ _GLOBAL_HTTPX_HOOK_INSTALLED = False
 
 
 def _install_global_httpx_hook() -> None:
-    """Monkey-patch httpx.Client.send, .post, AND .stream to catch every request.
+    """Monkey-patch httpx.Client.send and .post to catch every request.
 
     We've seen evidence that some code paths use httpx differently —
-    possibly through subclasses that override send/post.  Patching all
-    three entry-points guarantees interception.
+    possibly through subclasses that override send/post.  Patching both
+    entry-points guarantees interception.
     """
     global _GLOBAL_HTTPX_HOOK_INSTALLED
     if _GLOBAL_HTTPX_HOOK_INSTALLED:
@@ -1253,23 +1253,6 @@ def _install_global_httpx_hook() -> None:
         return client_self.send(request)
 
     httpx.Client.post = _global_post  # type: ignore[method-assign]
-
-    # ── Level 3: override stream — ensures stream() routes through our overridden send() ──
-    _original_client_stream = httpx.Client.stream
-
-    def _global_stream(client_self, method, url, *, json=None, content=None,
-                       data=None, files=None, headers=None, params=None, **kwargs):
-        request = client_self.build_request(
-            method, url, json=json, content=content, data=data,
-            files=files, headers=headers, params=params, **kwargs,
-        )
-        return _original_client_stream(
-            client_self, method, url,
-            json=json, content=content, data=data,
-            files=files, headers=headers, params=params, **kwargs,
-        )
-
-    httpx.Client.stream = _global_stream  # type: ignore[method-assign]
     _trace("global-httpx-hook-installed")
 
 
