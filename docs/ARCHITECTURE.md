@@ -41,7 +41,7 @@ antigravity_auth/
 └── transform/                # Header/model helpers plus request/response transform utilities
 
 plugins/
-├── antigravity_tools/        # File-system Hermes CLI plugin wrapper
+├── antigravity-cli/          # File-system Hermes CLI plugin wrapper
 └── model-providers/
     └── antigravity/          # Provider aliases for Hermes model discovery
 ```

@@ -191,9 +191,16 @@ def _mask_headers(headers: dict) -> dict:
   return masked
 
 
-def _sanitize_body(body: str) -> str:
-  """Redact token values from debug log bodies."""
-  return redact_secret_text(body)
+def _sanitize_body(body: Any) -> str:
+  """Redact secret values from debug log bodies."""
+  if body is None:
+    return ""
+  if isinstance(body, str):
+    return redact_secret_text(body)
+  try:
+    return json.dumps(redact_secrets(body))
+  except Exception:
+    return redact_secret_text(str(body))
 
 
 def truncate_text(text: str, max_chars: int = 12000) -> str:
@@ -298,7 +305,7 @@ def log_antigravity_debug_response(
   if body:
     _log_debug(
       f"[Antigravity Debug {context_id}] Response Body Preview: "
-      f"{truncate_text(_sanitize_body(body) if isinstance(body, str) else str(body), MAX_BODY_PREVIEW_CHARS)}"
+      f"{truncate_text(_sanitize_body(body), MAX_BODY_PREVIEW_CHARS)}"
     )
 
 
@@ -356,13 +363,13 @@ def log_rate_limit_event(
 
   if body_info:
     if body_info.get("message"):
-      _log_debug(f"[RateLimit] message: {body_info['message']}")
+      _log_debug(f"[RateLimit] message: {redact_secret_text(str(body_info['message']))}")
     if body_info.get("quotaResetTime"):
       _log_debug(f"[RateLimit] quotaResetTime: {body_info['quotaResetTime']}")
     if body_info.get("retryDelayMs") is not None:
       _log_debug(f"[RateLimit] body retryDelayMs: {body_info['retryDelayMs']}")
     if body_info.get("reason"):
-      _log_debug(f"[RateLimit] reason: {body_info['reason']}")
+      _log_debug(f"[RateLimit] reason: {redact_secret_text(str(body_info['reason']))}")
 
 
 def log_quota_status(

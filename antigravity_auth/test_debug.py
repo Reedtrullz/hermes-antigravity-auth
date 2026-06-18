@@ -164,6 +164,50 @@ class TestSanitizeBody(unittest.TestCase):
         self.assertNotIn("def", sanitized)
         self.assertNotIn("Bearer xyz", sanitized)
 
+    def test_sanitize_body_redacts_non_string_body(self):
+        from antigravity_auth.debug import _sanitize_body
+
+        body = {
+            "headers": {"X-Goog-Api-Key": "api-secret"},
+            "tokens": {"refreshToken": "refresh-secret"},
+        }
+        sanitized = _sanitize_body(body)
+        self.assertNotIn("api-secret", sanitized)
+        self.assertNotIn("refresh-secret", sanitized)
+        self.assertIn("[REDACTED]", sanitized)
+
+
+class TestRateLimitLogging(unittest.TestCase):
+    def test_rate_limit_body_info_redacts_message_and_reason(self):
+        from antigravity_auth import debug as debug_module
+        from antigravity_auth.debug import log_rate_limit_event
+
+        lines = []
+        old_enabled = debug_module._debug_enabled
+        old_writer = debug_module._log_writer
+        try:
+            debug_module._debug_enabled = True
+            debug_module._log_writer = lines.append
+            log_rate_limit_event(
+                0,
+                "user@example.com",
+                "gemini",
+                429,
+                1000,
+                {
+                    "message": "{'refreshToken': 'refresh-secret'}",
+                    "reason": "client_secret=client-secret",
+                },
+            )
+        finally:
+            debug_module._debug_enabled = old_enabled
+            debug_module._log_writer = old_writer
+
+        rendered = "\n".join(lines)
+        self.assertNotIn("refresh-secret", rendered)
+        self.assertNotIn("client-secret", rendered)
+        self.assertIn("[REDACTED]", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -220,6 +220,8 @@ def verify_account_access(
             "generationConfig": {"maxOutputTokens": 1, "temperature": 0},
         },
     }
+    if project_id:
+        request_body["project"] = project_id
 
     data = json.dumps(request_body).encode("utf-8")
     url = f"{ANTIGRAVITY_ENDPOINT_PROD}/v1internal:streamGenerateContent?alt=sse"

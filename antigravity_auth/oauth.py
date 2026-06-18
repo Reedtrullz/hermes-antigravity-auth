@@ -22,6 +22,7 @@ try:
         require_credentials,
     )
     from .debug import createLogger, format_error_for_log
+    from .redaction import redact_secret_text
 except ImportError:
     from _http_utils import decompress_response as _decompress
     from constants import (
@@ -34,6 +35,7 @@ except ImportError:
         require_credentials,
     )
     from debug import createLogger, format_error_for_log
+    from redaction import redact_secret_text
 
 _log = createLogger(__name__)
 
@@ -253,7 +255,7 @@ def exchange_antigravity(code: str, state: str) -> dict:
         )
         
         if token_status != 200:
-            error_text = token_bytes.decode("utf-8", errors="ignore")
+            error_text = redact_secret_text(token_bytes.decode("utf-8", errors="ignore"))
             return {"type": "failed", "error": error_text}
             
         token_payload = json.loads(token_bytes.decode("utf-8", errors="ignore"))

@@ -232,6 +232,20 @@ class TestSoftQuotaThreshold(unittest.TestCase):
             )
         )
 
+    def test_malformed_remaining_fraction_returns_false(self):
+        now_ms = time.time() * 1000
+        for remaining_fraction in ("unknown", True, {"bad": "shape"}):
+            with self.subTest(remaining_fraction=remaining_fraction):
+                self.assertFalse(
+                    is_over_soft_quota_threshold(
+                        cached_quota={"gemini-pro": {"remainingFraction": remaining_fraction}},
+                        cached_quota_updated_at=now_ms,
+                        family="gemini",
+                        threshold_percent=90,
+                        cache_ttl_ms=60000,
+                    )
+                )
+
     def test_exactly_at_threshold_returns_true(self):
         now_ms = time.time() * 1000
         # 10% remaining = 90% used = exactly at 90% threshold

@@ -16,7 +16,7 @@ def _missing_credentials_error() -> str:
         "Antigravity OAuth credentials not found.\n\n"
         "Options:\n"
         "  1. Set ANTIGRAVITY_CLIENT_ID and ANTIGRAVITY_CLIENT_SECRET env vars\n"
-        "  2. Run hermes antigravity set-credentials --client-id <id> --client-secret <secret>\n"
+        "  2. Run hermes antigravity set-credentials --client-id <id> and enter the secret at the hidden prompt\n"
         f"  3. Create {credential_file_path()} with client_id/client_secret\n"
     )
 

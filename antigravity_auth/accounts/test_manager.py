@@ -382,6 +382,34 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         assert result is not None
         self.assertEqual(result.email, "alice@example.com")
 
+    def test_malformed_cached_quota_does_not_block_selection(self) -> None:
+        """Bad quota cache shapes should not make an otherwise usable account unavailable."""
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                    "cachedQuota": {"gemini-pro": {"remainingFraction": "unknown"}},
+                    "cachedQuotaUpdatedAt": time.time() * 1000,
+                }
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        result = manager.get_current_or_next_for_family(
+            "gemini",
+            strategy="sticky",
+            soft_quota_threshold_percent=90,
+            soft_quota_cache_ttl_ms=60000,
+        )
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "alice@example.com")
+
     def test_skips_rate_limited(self) -> None:
         """Sticky selection skips a rate-limited account and falls through to the next."""
         now_ms = time.time() * 1000

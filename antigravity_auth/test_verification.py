@@ -1,7 +1,8 @@
 import os
+import json
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from antigravity_auth.verification import (
     VerificationProbeResult,
@@ -185,6 +186,27 @@ class TestExtractVerificationErrorDetails(unittest.TestCase):
 
 
 class TestProbeAccountHealth(unittest.TestCase):
+    @patch("antigravity_auth.verification.urllib.request.urlopen")
+    def test_verify_account_access_includes_project_in_header_and_envelope(self, mock_urlopen):
+        from antigravity_auth.verification import verify_account_access
+
+        mock_response = MagicMock()
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = verify_account_access(
+            {"email": "user@example.com"},
+            "access-token",
+            project_id="managed-project",
+        )
+
+        self.assertEqual(result.status, "ok")
+        req = mock_urlopen.call_args.args[0]
+        body = json.loads(req.data.decode("utf-8"))
+        self.assertEqual(body["project"], "managed-project")
+        self.assertEqual(body["model"], "gemini-3.5-flash-low")
+        self.assertEqual(body["request"]["model"], "gemini-3.5-flash-low")
+        self.assertEqual(req.headers["X-goog-user-project"], "managed-project")
+
     def test_probe_uses_refreshed_access_without_rewriting_auth_stores(self):
         from antigravity_auth import verification
         from antigravity_auth.storage import get_active_token_from_auth_json, sync_token_to_auth_json

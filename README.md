@@ -58,15 +58,25 @@ support.
 
 Source/git installs do not include private OAuth client credentials. Before
 running `hermes antigravity login`, create a Google OAuth desktop client with
-authorized redirect URI `http://localhost:51121/oauth-callback`, then provide
-its values via environment variables:
+authorized redirect URI `http://localhost:51121/oauth-callback`, then store
+its values in Hermes home:
+
+```bash
+hermes antigravity set-credentials --client-id "your-client-id.apps.googleusercontent.com"
+```
+
+The command prompts for `ANTIGRAVITY_CLIENT_SECRET` with hidden input and writes
+`~/.hermes/antigravity-credentials.json` with private permissions.
+
+For automation, environment variables are also supported:
 
 ```bash
 export ANTIGRAVITY_CLIENT_ID="your-client-id.apps.googleusercontent.com"
 export ANTIGRAVITY_CLIENT_SECRET="your-client-secret"
 ```
 
-Or use an external Hermes credentials file outside the Python package tree:
+Or create the external Hermes credentials file outside the Python package tree
+manually:
 
 ```bash
 mkdir -p ~/.hermes
@@ -142,7 +152,13 @@ In `hermes model` and the in-agent `/model` picker, Antigravity appears as
 
 2. Provide OAuth client credentials before login. Create a Google OAuth desktop
    client with authorized redirect URI
-   `http://localhost:51121/oauth-callback`, then prefer environment variables:
+   `http://localhost:51121/oauth-callback`, then prefer the CLI credential
+   helper:
+   ```bash
+   hermes antigravity set-credentials --client-id "your-client-id.apps.googleusercontent.com"
+   ```
+   The command prompts for the client secret with hidden input. For automation,
+   environment variables are also supported:
    ```bash
    export ANTIGRAVITY_CLIENT_ID="your-client-id.apps.googleusercontent.com"
    export ANTIGRAVITY_CLIENT_SECRET="your-client-secret"
@@ -359,7 +375,8 @@ Controls which account is picked from the multi-account pool.
 
 > OAuth credentials are loaded from `ANTIGRAVITY_CLIENT_ID` /
 > `ANTIGRAVITY_CLIENT_SECRET` first, or from external
-> `~/.hermes/antigravity-credentials.json`. `antigravity_auth/_credentials.py`
+> `~/.hermes/antigravity-credentials.json` written by
+> `hermes antigravity set-credentials`. `antigravity_auth/_credentials.py`
 > is legacy reference only and is not recommended; package-tree credential files
 > are refused by package builds.
 
@@ -548,7 +565,7 @@ hermes-antigravity-auth/
 │   └── ANTIGRAVITY_API_SPEC.md  # API reference
 ├── plugins/
 │   ├── model-providers/     # Hermes model provider plugin
-│   └── antigravity_tools/   # Hermes CLI plugin
+│   └── antigravity-cli/     # Hermes CLI plugin
 ├── pyproject.toml           # Python package config (v1.7.0)
 ├── MIGRATION.md             # OpenCode → Hermes migration guide
 └── README.md                # This file

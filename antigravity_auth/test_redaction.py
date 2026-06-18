@@ -57,3 +57,43 @@ class TestSessionTokenRedaction(unittest.TestCase):
         self.assertEqual(redacted["deviceId"], "abc-123")
         self.assertEqual(redacted["sessionToken"], "[REDACTED]")
         self.assertEqual(redacted["userAgent"], "Mozilla/5.0")
+
+
+class TestApiKeyRedaction(unittest.TestCase):
+    def test_common_api_key_shapes_are_redacted(self):
+        from antigravity_auth.redaction import REDACTED, redact_secrets
+
+        raw = {
+            "X-Goog-Api-Key": "header-secret",
+            "apiKey": "camel-secret",
+            "url": "https://example.test/?key=query-secret&api_key=api-secret",
+            "json": '{"x-api-key":"json-secret","apiKey":"json-camel-secret"}',
+            "form": "api_key=form-secret",
+            "headers": "x-goog-api-key: text-header-secret",
+        }
+
+        redacted = redact_secrets(raw)
+        rendered = str(redacted)
+        for secret in (
+            "header-secret",
+            "camel-secret",
+            "query-secret",
+            "api-secret",
+            "json-secret",
+            "json-camel-secret",
+            "form-secret",
+            "text-header-secret",
+        ):
+            self.assertNotIn(secret, rendered)
+        self.assertEqual(redacted["X-Goog-Api-Key"], REDACTED)
+        self.assertEqual(redacted["apiKey"], REDACTED)
+
+    def test_python_repr_secret_shapes_are_redacted(self):
+        from antigravity_auth.redaction import redact_secret_text
+
+        rendered = redact_secret_text(
+            "{'refreshToken': 'refresh-secret', 'client_secret': 'client-secret'}"
+        )
+        self.assertNotIn("refresh-secret", rendered)
+        self.assertNotIn("client-secret", rendered)
+        self.assertIn("[REDACTED]", rendered)

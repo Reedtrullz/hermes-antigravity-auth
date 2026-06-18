@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,10 @@ def _hermes_home() -> Path:
 def _credential_file_path() -> Path:
   """Return the canonical Hermes Antigravity credential file path."""
   return _hermes_home() / "antigravity-credentials.json"
+
+
+def _secret_file_opener(path: str, flags: int) -> int:
+  return os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
 
 
 def credential_file_path() -> Path:
@@ -76,15 +81,25 @@ def write_oauth_credentials(client_id: str, client_secret: str, path: Path | Non
   target = path or _credential_file_path()
   target.parent.mkdir(parents=True, exist_ok=True)
   os.chmod(target.parent, 0o700)
-  tmp_path = target.with_name(f"{target.name}.tmp")
-  tmp_path.write_text(
-    json.dumps({
-      "client_id": clean_client_id,
-      "client_secret": clean_client_secret,
-    }, indent=2, sort_keys=True) + "\n",
-    encoding="utf-8",
+  tmp_path = target.with_name(
+    f"{target.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
   )
-  os.chmod(tmp_path, 0o600)
-  tmp_path.replace(target)
-  os.chmod(target, 0o600)
+  try:
+    with open(tmp_path, "w", encoding="utf-8", opener=_secret_file_opener) as f:
+      f.write(
+        json.dumps({
+          "client_id": clean_client_id,
+          "client_secret": clean_client_secret,
+        }, indent=2, sort_keys=True) + "\n"
+      )
+    os.replace(tmp_path, target)
+    os.chmod(target, 0o600)
+  except Exception:
+    try:
+      tmp_path.unlink()
+    except FileNotFoundError:
+      pass
+    except Exception:
+      pass
+    raise
   return target

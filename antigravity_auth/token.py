@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 try:
     from ._http_utils import decompress_response as _decompress
     from .constants import require_credentials
+    from .redaction import redact_secret_text
     from .storage import (
         get_active_token_from_auth_json,
         load_accounts,
@@ -18,6 +19,7 @@ try:
 except ImportError:
     from _http_utils import decompress_response as _decompress
     from constants import require_credentials
+    from redaction import redact_secret_text
     from storage import (
         get_active_token_from_auth_json,
         load_accounts,
@@ -390,7 +392,7 @@ def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool 
         resp_bytes = str(e).encode("utf-8", errors="ignore")
 
     if status != 200:
-        error_text = resp_bytes.decode("utf-8", errors="ignore")
+        error_text = redact_secret_text(resp_bytes.decode("utf-8", errors="ignore"))
         error_info = parse_oauth_error_payload(error_text)
         code = error_info.get("code")
         description = error_info.get("description") or error_text

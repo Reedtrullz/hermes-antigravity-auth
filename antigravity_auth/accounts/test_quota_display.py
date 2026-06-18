@@ -35,6 +35,11 @@ class TestGetQuotaStatusLine(unittest.TestCase):
     def test_empty_dict_returns_na(self):
         self.assertEqual(get_quota_status_line({}), "N/A")
 
+    def test_malformed_remaining_fraction_is_clamped(self):
+        line = get_quota_status_line({"remainingFraction": "unknown"})
+        self.assertIn("EXHAUSTED", line)
+        self.assertNotIn("unknown", line)
+
 
 class TestFormatQuotaProgressBar(unittest.TestCase):
     def test_full(self):
@@ -60,10 +65,12 @@ class TestFormatQuotaProgressBar(unittest.TestCase):
     def test_clamps_negative(self):
         bar = format_quota_progress_bar(-0.5)
         self.assertIn("0%", bar)
+        self.assertNotIn("-50%", bar)
 
     def test_clamps_overflow(self):
         bar = format_quota_progress_bar(1.5)
-        self.assertIn("150%", bar)
+        self.assertIn("100%", bar)
+        self.assertNotIn("150%", bar)
 
     def test_custom_width(self):
         bar = format_quota_progress_bar(0.5, width=10)

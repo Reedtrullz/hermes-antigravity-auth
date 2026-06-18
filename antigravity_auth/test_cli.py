@@ -105,6 +105,47 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, 1)
 
+    def test_handle_cli_exits_nonzero_when_login_fails(self):
+        args = MagicMock()
+        args.action = "login"
+        args.project_id = "project-1"
+        args.no_browser = True
+
+        with patch.object(cli_module, "run_login_flow", return_value=False):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_module.handle_cli(args)
+
+        self.assertEqual(ctx.exception.code, 1)
+
+    def test_handle_cli_exits_nonzero_for_failed_boolean_actions(self):
+        cases = (
+            ("delete", "delete_account", {"email_or_index": "1"}),
+            ("set-project", "set_account_project", {"email_or_index": "1", "project_id": "project-1"}),
+            ("set-credentials", "set_credentials", {"client_id": "client-id", "client_secret": "client-secret"}),
+        )
+        for action, function_name, attrs in cases:
+            with self.subTest(action=action):
+                args = MagicMock()
+                args.action = action
+                for name, value in attrs.items():
+                    setattr(args, name, value)
+
+                with patch.object(cli_module, function_name, return_value=False):
+                    with self.assertRaises(SystemExit) as ctx:
+                        cli_module.handle_cli(args)
+
+                self.assertEqual(ctx.exception.code, 1)
+
+    def test_handle_cli_exits_nonzero_when_doctor_has_fail(self):
+        args = MagicMock()
+        args.action = "doctor"
+
+        with patch("antigravity_auth.doctor.print_doctor", return_value=False):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_module.handle_cli(args)
+
+        self.assertEqual(ctx.exception.code, 1)
+
     def test_run_login_flow_manual_code_only_uses_returned_state(self):
         auth_data = {
             "url": "https://auth",
@@ -205,10 +246,13 @@ class TestCli(unittest.TestCase):
                  "expires": 9999999999,
                  "projectId": "project_123",
              }), \
-             patch.object(cli_module, "sync_token_to_all_auth_stores"):
+             patch.object(cli_module, "sync_token_to_all_auth_stores"), \
+             patch("builtins.print") as mock_print:
             success = run_login_flow(project_id="project_123", no_browser=False)
 
         self.assertTrue(success)
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("Waiting for callback on http://localhost:51121/oauth-callback", output)
         mock_callback.assert_called_once_with(
             port=51121,
             timeout=60,
@@ -637,7 +681,7 @@ class TestCli(unittest.TestCase):
             sync_calls.append(kwargs)
             return True
 
-        with patch("builtins.input", side_effect=["3", "0", "6"]), \
+        with patch("builtins.input", side_effect=["3", "0", "7"]), \
              patch("antigravity_auth.token.refresh_access_token", side_effect=fake_refresh), \
              patch("antigravity_auth.cli.sync_token_to_all_auth_stores", side_effect=fake_sync):
             interactive_accounts_menu()
@@ -663,7 +707,7 @@ class TestCli(unittest.TestCase):
             "cursor": 0,
         })
 
-        with patch("builtins.input", side_effect=["3", "1", "6"]), \
+        with patch("builtins.input", side_effect=["3", "1", "7"]), \
              patch("antigravity_auth.token.refresh_access_token", return_value={
                  "access": "new-access",
                  "refresh": "new-refresh|new-project",
@@ -676,6 +720,14 @@ class TestCli(unittest.TestCase):
         self.assertEqual(loaded["activeIndex"], 1)
         self.assertEqual(loaded["activeIndexByFamily"], {"claude": 1, "gemini": 1})
         self.assertEqual(loaded["cursor"], 1)
+
+    def test_accounts_menu_lists_project_edit_before_exit(self):
+        with patch("builtins.input", side_effect=["7"]), patch("builtins.print") as mock_print:
+            interactive_accounts_menu()
+
+        output = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+        self.assertIn("6. Set account project ID", output)
+        self.assertIn("7. Exit", output)
 
 if __name__ == "__main__":
     unittest.main()

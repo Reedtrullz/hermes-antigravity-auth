@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlparse
 from typing import cast
 
 from .auth_sync import sync_token_to_all_auth_stores, sync_token_to_google_oauth
+from .constants import ANTIGRAVITY_REDIRECT_URI
 from .credentials import MissingOAuthCredentialsError, write_oauth_credentials
 from .oauth import authorize_antigravity, exchange_antigravity
 from .storage import (
@@ -293,7 +294,7 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
         print("Opening your browser to authorize...")
         try:
             webbrowser.open(auth_url)
-            print("Waiting for callback on http://localhost:51121/...")
+            print(f"Waiting for callback on {ANTIGRAVITY_REDIRECT_URI}...")
             code, state = run_callback_server(
                 port=51121,
                 timeout=60,
@@ -815,8 +816,8 @@ def interactive_accounts_menu():
             print("3. Set active account")
             print("4. Delete account")
             print("5. Verify accounts & status")
-            print("6. Exit")
-            print("7. Set account project ID")
+            print("6. Set account project ID")
+            print("7. Exit")
             
             choice = input("\nSelect an option [1-7]: ").strip()
             if not choice:
@@ -920,14 +921,14 @@ def interactive_accounts_menu():
             elif choice == "5":
                 check_quotas_and_verify()
             elif choice == "6":
-                print("Exiting console.")
-                break
-            elif choice == "7":
                 list_accounts()
                 target = input("Enter email or index to update: ").strip()
                 project = input("Enter Google Cloud Project ID: ").strip()
                 if target and project:
                     set_account_project(target, project)
+            elif choice == "7":
+                print("Exiting console.")
+                break
             else:
                 print("Invalid option. Please try again.")
         except KeyboardInterrupt:
@@ -1061,28 +1062,37 @@ def setup_cli(parser):
 
     credentials_parser = subparsers.add_parser("set-credentials", help="Store Antigravity OAuth client credentials")
     credentials_parser.add_argument("--client-id", default="", help="OAuth desktop client ID")
-    credentials_parser.add_argument("--client-secret", default="", help="OAuth desktop client secret")
+    credentials_parser.add_argument(
+        "--client-secret",
+        default="",
+        help="OAuth desktop client secret; omit to enter it via hidden prompt",
+    )
 
 
 def handle_cli(args):
     try:
         if args.action == "login":
-            run_login_flow(project_id=args.project_id, no_browser=args.no_browser)
+            if not run_login_flow(project_id=args.project_id, no_browser=args.no_browser):
+                sys.exit(1)
         elif args.action == "accounts":
             interactive_accounts_menu()
         elif args.action == "list":
             list_accounts()
         elif args.action == "delete":
-            delete_account(args.email_or_index)
+            if not delete_account(args.email_or_index):
+                sys.exit(1)
         elif args.action == "set-project":
-            set_account_project(args.email_or_index, args.project_id)
+            if not set_account_project(args.email_or_index, args.project_id):
+                sys.exit(1)
         elif args.action == "set-credentials":
-            set_credentials(client_id=args.client_id, client_secret=args.client_secret)
+            if not set_credentials(client_id=args.client_id, client_secret=args.client_secret):
+                sys.exit(1)
         elif args.action in ("quota", "check"):
             check_quotas_and_verify()
         elif args.action == "doctor":
             from .doctor import print_doctor
-            print_doctor()
+            if not print_doctor():
+                sys.exit(1)
         elif args.action == "status":
             print_interceptor_status()
         elif args.action == "selftest":

@@ -188,3 +188,19 @@ class TestDoctor(unittest.TestCase):
         self.assertEqual(row.check, "OAuth client credentials")
         self.assertIn("not configured", row.detail)
         self.assertIn("set-credentials", row.fix)
+
+    def test_doctor_warns_when_oauth_credential_file_is_world_readable(self):
+        from pathlib import Path
+        from antigravity_auth.doctor import _check_oauth_client_credentials
+
+        path = Path(self.temp_dir.name) / "antigravity-credentials.json"
+        path.write_text('{"client_id":"id","client_secret":"secret"}', encoding="utf-8")
+        os.chmod(path, 0o644)
+
+        with patch.dict("os.environ", {"HERMES_HOME": self.temp_dir.name}, clear=True):
+            row = _check_oauth_client_credentials()
+
+        self.assertEqual(row.status, "WARN")
+        self.assertEqual(row.check, "OAuth client credentials")
+        self.assertIn("permissions are 0o644", row.detail)
+        self.assertIn("chmod 600", row.fix)

@@ -204,10 +204,14 @@ def _extract_usage_from_sse_payload(body: str) -> dict[str, Any] | None:
     return None
   lines = body.split("\n")
   current_data: list[str] = []
-  for line in lines:
-    if line.startswith("data: "):
-      current_data.append(line[6:])
-    elif line == "" and current_data:
+  for raw_line in lines:
+    line = raw_line.rstrip("\r")
+    if line.startswith("data:"):
+      data_value = line[5:]
+      if data_value.startswith(" "):
+        data_value = data_value[1:]
+      current_data.append(data_value)
+    elif line.strip() == "" and current_data:
       data_str = "".join(current_data)
       try:
         parsed = json.loads(data_str)
@@ -397,9 +401,13 @@ def _handle_error_response(
   )):
     extra_headers["x-antigravity-context-error"] = "prompt_too_long"
 
-  if "tool_use" in msg_lower and "tool_result" in msg_lower and (
-    "without" in msg_lower or "immediately after" in msg_lower
-  ):
+  try:
+    from ..recovery import detect_error_type
+    recovery_type = detect_error_type({"error": {"message": raw_message}})
+  except Exception:
+    recovery_type = None
+
+  if recovery_type == "tool_result_missing":
     extra_headers["x-antigravity-context-error"] = "tool_pairing"
     return (
       json.dumps(error_body),

@@ -22,6 +22,8 @@ _SECRET_KEY_FRAGMENTS = (
   "oauthcode",
   "session_token",
   "sessiontoken",
+  "api_key",
+  "apikey",
 )
 
 _EXACT_SECRET_KEYS = {
@@ -34,13 +36,19 @@ _EXACT_SECRET_KEYS = {
 
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _QUERY_SECRET_RE = re.compile(
-  r"(?i)([?&](?:access_token|refresh_token|id_token|client_secret|code|code_verifier)=)[^&#\s]+"
+  r"(?i)([?&](?:access_token|refresh_token|id_token|client_secret|code|code_verifier|api_key|apikey|key)=)[^&#\s]+"
 )
 _JSON_SECRET_RE = re.compile(
-  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|oauth_code|oauthCode|authorization|refresh|access|code)"\s*:\s*")[^"]*(")'
+  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)"\s*:\s*")[^"]*(")'
+)
+_PYTHON_REPR_SECRET_RE = re.compile(
+  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)'\s*:\s*')[^']*(')"
 )
 _FORM_SECRET_RE = re.compile(
-  r"(?i)\b(access_token|refresh_token|id_token|client_secret|code_verifier|code)=([^&\s]+)"
+  r"(?i)\b(access_token|refresh_token|id_token|client_secret|code_verifier|code|api_key|apikey|key)=([^&\s]+)"
+)
+_HEADER_SECRET_RE = re.compile(
+  r"(?im)^(\s*(?:authorization|x-api-key|x-goog-api-key|api-key)\s*:\s*)[^\r\n]+"
 )
 
 
@@ -63,8 +71,10 @@ def redact_secret_text(text: str) -> str:
   if not text:
     return text
   redacted = _BEARER_RE.sub("Bearer " + REDACTED, text)
+  redacted = _HEADER_SECRET_RE.sub(lambda m: m.group(1) + REDACTED, redacted)
   redacted = _QUERY_SECRET_RE.sub(lambda m: m.group(1) + REDACTED, redacted)
   redacted = _JSON_SECRET_RE.sub(lambda m: m.group(1) + REDACTED + m.group(2), redacted)
+  redacted = _PYTHON_REPR_SECRET_RE.sub(lambda m: m.group(1) + REDACTED + m.group(2), redacted)
   redacted = _FORM_SECRET_RE.sub(lambda m: f"{m.group(1)}={REDACTED}", redacted)
   return redacted
 

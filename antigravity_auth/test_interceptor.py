@@ -73,6 +73,37 @@ class TestTracePermissions(unittest.TestCase):
             remaining = list(traces_path.glob("trace-*.log"))
             self.assertEqual(len(remaining), 5, f"Expected 5 files, got {len(remaining)}")
 
+    def test_trace_redacts_secret_shaped_values(self):
+        """Trace diagnostics must not persist raw token or API-key values."""
+        with tempfile.TemporaryDirectory() as tmp:
+            import antigravity_auth.interceptor as _int
+            old_trace_dir = _int._TRACE_DIR
+            try:
+                with patch("antigravity_auth.storage.get_hermes_home", return_value=Path(tmp)):
+                    _int._TRACE_DIR = None
+                    _int._trace(
+                        "hook-fired access_token=event-secret",
+                        url="https://example.test/?access_token=url-secret&key=query-secret",
+                        header="Authorization: Bearer bearer-secret",
+                        structured={"X-Goog-Api-Key": "structured-secret"},
+                    )
+            finally:
+                _int._TRACE_DIR = old_trace_dir
+
+            trace_text = "\n".join(
+                f.read_text(encoding="utf-8")
+                for f in (Path(tmp) / "antigravity-traces").glob("trace-*.log")
+            )
+            for secret in (
+                "event-secret",
+                "url-secret",
+                "query-secret",
+                "bearer-secret",
+                "structured-secret",
+            ):
+                self.assertNotIn(secret, trace_text)
+            self.assertIn("[REDACTED]", trace_text)
+
 
 class TestModelHeaderHelpers(unittest.TestCase):
 
@@ -231,6 +262,92 @@ class TestRequestHook(unittest.TestCase):
         body = json.loads(request.content)
         self.assertEqual(body["model"], "gemini-3-flash-agent")
         self.assertEqual(body["request"]["model"], "gemini-3-flash-agent")
+        self.assertEqual(int(request.headers["Content-Length"]), len(request.content))
+
+    def test_request_hook_selects_account_using_resolved_backend_model(self):
+        request = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+            headers={"Authorization": "Bearer stale", "Content-Type": "application/json"},
+            json={
+                "project": "project-1",
+                "model": "gemini-3.5-flash-high",
+                "request": {
+                    "model": "gemini-3.5-flash-high",
+                    "contents": [],
+                },
+            },
+        )
+        request.read()
+        config = type("Config", (), {
+            "cli_first": False,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 90,
+        })()
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.interceptor._select_request_account",
+            return_value=None,
+        ) as select_account:
+            self.hook(request)
+
+        select_account.assert_called_once()
+        self.assertEqual(select_account.call_args.args[0], "gemini-3-flash-agent")
+
+    def test_request_hook_applies_claude_transforms_for_hook_only_path(self):
+        request = httpx.Request(
+            "POST",
+            "https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+            headers={"Authorization": "Bearer stale", "Content-Type": "application/json"},
+            json={
+                "project": "project-1",
+                "model": "claude-sonnet-4-6",
+                "request": {
+                    "contents": [{
+                        "role": "model",
+                        "parts": [
+                            {"functionCall": {"name": "read_file", "args": {}}},
+                            {"thought": True, "text": "stale reasoning", "thoughtSignature": "sig"},
+                            {"text": "visible"},
+                        ],
+                    }],
+                    "toolConfig": {"functionCallingConfig": {"mode": "AUTO"}},
+                    "tools": [{"functionDeclarations": [{
+                        "name": "read_file",
+                        "parameters": {"type": "object", "properties": {}},
+                    }]}],
+                },
+            },
+        )
+        request.read()
+        config = type("Config", (), {
+            "cli_first": False,
+            "keep_thinking": False,
+            "soft_quota_cache_ttl_minutes": "auto",
+            "quota_refresh_interval_minutes": 15,
+            "account_selection_strategy": "hybrid",
+            "pid_offset_enabled": False,
+            "soft_quota_threshold_percent": 90,
+        })()
+        with patch("antigravity_auth.interceptor.get_config", return_value=config), patch(
+            "antigravity_auth.interceptor._select_request_account",
+            return_value=None,
+        ):
+            self.hook(request)
+
+        body = json.loads(request.content)
+        inner = body["request"]
+        parts = inner["contents"][0]["parts"]
+        self.assertEqual(parts[0]["functionCall"]["id"], "tool-call-1")
+        self.assertEqual(parts[1], {"text": "visible"})
+        self.assertEqual(
+            inner["toolConfig"]["functionCallingConfig"]["mode"],
+            "VALIDATED",
+        )
+        params = inner["tools"][0]["functionDeclarations"][0]["parameters"]
+        self.assertEqual(params["required"], ["_placeholder"])
         self.assertEqual(int(request.headers["Content-Length"]), len(request.content))
 
     def test_request_hook_sets_authorization_for_selected_account(self):
@@ -1209,6 +1326,7 @@ class TestRetryWrapper(unittest.TestCase):
         try:
             interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = False
             interceptor._install_global_httpx_hook()
+            self.assertIs(httpx.Client.post, original_post)
             client = httpx.Client(
                 transport=httpx.MockTransport(lambda request: httpx.Response(500, request=request))
             )
@@ -1219,6 +1337,8 @@ class TestRetryWrapper(unittest.TestCase):
                 response = client.post(
                     "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
                     json={"model": "claude-sonnet-4-6", "request": {"contents": []}},
+                    auth=("user", "password"),
+                    follow_redirects=True,
                 )
 
             self.assertEqual(response.status_code, 500)

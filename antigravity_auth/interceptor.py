@@ -15,6 +15,7 @@ from .fingerprint import (
     generate_fingerprint,
     update_fingerprint_version,
 )
+from .redaction import redact_secret_text, redact_secrets
 from .transform.envelope import (
     HeaderStyle,
     build_antigravity_headers,
@@ -31,6 +32,14 @@ _ORIGINAL_ENSURE_PROJECT_CONTEXT = None
 _TRACE_DIR = None
 _REQUEST_HOOK_PROCESSED = "antigravity_request_hook_processed"
 _RESPONSE_HOOK_PROCESSED = "antigravity_response_hook_processed"
+
+
+def _trace_value(value: Any) -> str:
+    try:
+        redacted = redact_secrets(value)
+    except Exception:
+        redacted = value
+    return redact_secret_text(str(redacted))
 
 
 def _trace(event: str, **kwargs: Any) -> None:
@@ -74,8 +83,12 @@ def _trace(event: str, **kwargs: Any) -> None:
         ts = _time.time()
         pid = os.getpid()
         trace_file = _TRACE_DIR / f"trace-{pid}.log"
-        extra = " ".join(f"{k}={v}" for k, v in kwargs.items()) if kwargs else ""
-        line = f"{ts:.3f} {event} {extra}\n"
+        safe_event = redact_secret_text(str(event))
+        extra = " ".join(
+            f"{redact_secret_text(str(k))}={_trace_value(v)}"
+            for k, v in kwargs.items()
+        ) if kwargs else ""
+        line = f"{ts:.3f} {safe_event} {extra}\n"
         with open(trace_file, "a", opener=_private_trace_opener) as f:
             f.write(line)
     except Exception:
@@ -769,15 +782,24 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
             "Set cli_first: false in config to use the Antigravity header style."
         )
 
-    selected = _select_request_account(requested_model, header_style, config)
     model = resolve_model_for_header_style(requested_model, header_style)
+    selected = _select_request_account(model, header_style, config)
+    body_changed = False
+    inner_request = body.get("request")
     if model != requested_model:
         body["model"] = model
-        inner_request = body.get("request")
         if isinstance(inner_request, dict) and isinstance(inner_request.get("model"), str):
             inner_request["model"] = model
-        _replace_request_json(request, body)
+        body_changed = True
         _trace("hook-model-rewritten", requested=requested_model, resolved=model)
+    transform_model = f"{requested_model} {model}"
+    if isinstance(inner_request, dict) and "claude" in transform_model.lower():
+        _inject_tool_call_ids(inner_request)
+        _apply_claude_transforms(inner_request)
+        body_changed = True
+        _trace("hook-claude-transforms-applied", requested=requested_model, resolved=model)
+    if body_changed:
+        _replace_request_json(request, body)
     
     for key in list(request.headers.keys()):
         if key.lower() not in ("host", "authorization", "content-type", "accept", "accept-encoding", "content-length"):
@@ -1245,18 +1267,12 @@ _GLOBAL_HTTPX_HOOK_INSTALLED = False
 
 
 def _install_global_httpx_hook() -> None:
-    """Monkey-patch httpx.Client.send and .post to catch every request.
-
-    We've seen evidence that some code paths use httpx differently —
-    possibly through subclasses that override send/post.  Patching both
-    entry-points guarantees interception.
-    """
+    """Monkey-patch httpx.Client.send to catch every request."""
     global _GLOBAL_HTTPX_HOOK_INSTALLED
     if _GLOBAL_HTTPX_HOOK_INSTALLED:
         return
     _GLOBAL_HTTPX_HOOK_INSTALLED = True
 
-    # ── Level 1: override send (catches internal Client usage) ──
     _original_client_send = httpx.Client.send
 
     def _global_send(client_self, request, *args, **kwargs):
@@ -1273,19 +1289,6 @@ def _install_global_httpx_hook() -> None:
         return response
 
     httpx.Client.send = _global_send  # type: ignore[method-assign]
-
-    # ── Level 2: override post — ensures post() routes through our overridden send() ──
-    _original_client_post = httpx.Client.post
-
-    def _global_post(client_self, url, *, json=None, content=None, data=None,
-                     files=None, headers=None, params=None, **kwargs):
-        request = client_self.build_request(
-            "POST", url, json=json, content=content, data=data,
-            files=files, headers=headers, params=params, **kwargs,
-        )
-        return client_self.send(request)
-
-    httpx.Client.post = _global_post  # type: ignore[method-assign]
     _trace("global-httpx-hook-installed")
 
 

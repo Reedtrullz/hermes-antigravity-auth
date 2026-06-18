@@ -80,11 +80,11 @@ class TestPluginContract(unittest.TestCase):
 
       self.assertEqual(
         generated_cli.read_text(encoding="utf-8"),
-        (repo_root / "plugins" / "antigravity_tools" / "__init__.py").read_text(encoding="utf-8"),
+        (repo_root / "plugins" / "antigravity-cli" / "__init__.py").read_text(encoding="utf-8"),
       )
       self.assertEqual(
         generated_cli_yaml.read_text(encoding="utf-8"),
-        (repo_root / "plugins" / "antigravity_tools" / "plugin.yaml").read_text(encoding="utf-8"),
+        (repo_root / "plugins" / "antigravity-cli" / "plugin.yaml").read_text(encoding="utf-8"),
       )
       self.assertEqual(
         generated_provider.read_text(encoding="utf-8"),

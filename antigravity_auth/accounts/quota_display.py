@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .quota import normalize_remaining_fraction
+
 GREEN = "\033[92m"
 YELLOW = "\033[93m"
 RED = "\033[91m"
@@ -30,6 +32,7 @@ def get_quota_status_line(quota_group: dict[str, Any] | None) -> str:
   limit = quota_group.get("limit")
 
   if remaining_fraction is not None:
+    remaining_fraction = normalize_remaining_fraction(remaining_fraction)
     percent = remaining_fraction * 100
     if remaining_fraction <= 0:
       return f"{RED}\u26a0 EXHAUSTED{RESET}"
@@ -44,6 +47,7 @@ def get_quota_status_line(quota_group: dict[str, Any] | None) -> str:
 
 
 def format_quota_progress_bar(remaining_fraction: float, width: int = 20) -> str:
+  remaining_fraction = normalize_remaining_fraction(remaining_fraction)
   filled = max(0, min(width, int(remaining_fraction * width)))
   empty = width - filled
 

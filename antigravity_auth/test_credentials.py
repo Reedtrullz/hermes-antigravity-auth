@@ -110,3 +110,14 @@ class TestCredentials(unittest.TestCase):
       self.assertEqual(data["client_secret"], "client-secret")
       self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
       self.assertEqual(stat.S_IMODE(os.stat(path.parent).st_mode), 0o700)
+
+  def test_write_oauth_credentials_cleans_private_temp_file_on_replace_failure(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      path = Path(tmpdir) / "nested" / "antigravity-credentials.json"
+
+      with patch("antigravity_auth.credentials.os.replace", side_effect=RuntimeError("replace failed")):
+        with self.assertRaises(RuntimeError):
+          write_oauth_credentials("client-id", "client-secret", path=path)
+
+      self.assertFalse(path.exists())
+      self.assertEqual(list(path.parent.glob("antigravity-credentials.json.*.tmp")), [])

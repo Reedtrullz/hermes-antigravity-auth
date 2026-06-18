@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 _LOCAL_CREDENTIALS_RELATIVE = Path("antigravity_auth") / "_credentials.py"
+_LOCAL_CREDENTIALS_BYTECODE_RELATIVE = Path("antigravity_auth") / "__pycache__"
 
 
 def assert_no_local_credentials_module(root: str | Path | None = None) -> None:
@@ -16,3 +17,11 @@ def assert_no_local_credentials_module(root: str | Path | None = None) -> None:
       "Move credentials to environment variables or ~/.hermes/antigravity-credentials.json "
       "before building a wheel/sdist."
     )
+  bytecode_dir = base / _LOCAL_CREDENTIALS_BYTECODE_RELATIVE
+  if bytecode_dir.exists():
+    for bytecode_path in bytecode_dir.glob("_credentials*.pyc"):
+      if bytecode_path.exists():
+        raise RuntimeError(
+          "Refusing to build with local antigravity_auth/__pycache__/_credentials*.pyc present. "
+          "Remove local credential bytecode caches before building a wheel/sdist."
+        )

@@ -217,6 +217,23 @@ class TestOAuth(unittest.TestCase):
         self.assertTrue(mock_make_post.called)
 
     @patch('antigravity_auth.oauth.make_post_request')
+    def test_exchange_antigravity_token_failure_redacts_secrets(self, mock_make_post):
+        state_id = "test_state_id_token_failure_redacted"
+        _pkce_verifier_store[state_id] = {"verifier": "test_verifier", "projectId": "test_project"}
+        state = encode_state({"id": state_id})
+        mock_make_post.return_value = (
+            400,
+            b'{"error":"invalid","error_description":"client_secret=test_client_secret refresh_token=refresh_secret"}',
+        )
+
+        result = exchange_antigravity('fake_code', state)
+
+        self.assertEqual(result['type'], 'failed')
+        self.assertNotIn("test_client_secret", result["error"])
+        self.assertNotIn("refresh_secret", result["error"])
+        self.assertIn("[REDACTED]", result["error"])
+
+    @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_missing_access_token(self, mock_make_post):
         # Populate the PKCE verifier store
         state_id = "test_state_id_missing_access"

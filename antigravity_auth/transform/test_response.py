@@ -448,6 +448,25 @@ class TestTransformAntigravityResponse(unittest.TestCase):
             "prompt_too_long",
         )
 
+    def test_tool_pairing_error_uses_shared_recovery_detection(self):
+        """Marks tool_use/tool_result errors as recoverable consistently."""
+        error_body = json.dumps({
+            "error": {
+                "message": "messages.2: tool_use id call_1 has no matching tool_result"
+            }
+        })
+        body, extra_headers, error = transform_antigravity_response(
+            error_body,
+            streaming=False,
+            status_code=400,
+            headers={"content-type": "application/json"},
+        )
+
+        self.assertIsNotNone(error)
+        self.assertEqual(error["recoveryType"], "tool_result_missing")
+        self.assertIsNotNone(extra_headers)
+        self.assertEqual(extra_headers["x-antigravity-context-error"], "tool_pairing")
+
     def test_sse_body_passthrough(self):
         """Returns SSE body unchanged for streaming responses."""
         sse_body = 'data: {"response": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}}\n\n'
@@ -495,6 +514,18 @@ class TestTransformAntigravityResponse(unittest.TestCase):
         self.assertIsNone(error)
         assert extra_headers is not None
         self.assertEqual(extra_headers["x-antigravity-total-token-count"], "43")
+
+    def test_sse_with_usage_extraction_accepts_crlf_and_data_without_space(self):
+        """Extracts usage from valid SSE framing variants."""
+        sse_body = 'data:{"response":{"usageMetadata":{"totalTokenCount":44}}}\r\n\r\n'
+        body, extra_headers, error = transform_antigravity_response(
+            sse_body, streaming=True,
+            headers={"content-type": "text/event-stream"},
+        )
+        self.assertEqual(body, sse_body)
+        self.assertIsNone(error)
+        assert extra_headers is not None
+        self.assertEqual(extra_headers["x-antigravity-total-token-count"], "44")
 
     def test_successful_response_transformed(self):
         """Transforms successful JSON response with thinking parts."""

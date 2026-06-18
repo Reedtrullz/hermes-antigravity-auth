@@ -698,7 +698,7 @@ class AccountManager:
     if age > cache_ttl_ms:
       return False
 
-    from .quota import resolve_quota_group
+    from .quota import normalize_remaining_fraction, resolve_quota_group
     quota_group = resolve_quota_group(family, model)
     group_data = account.cached_quota.get(quota_group)
     if group_data is None:
@@ -706,7 +706,9 @@ class AccountManager:
     remaining_fraction = group_data.get("remainingFraction")
     if remaining_fraction is None:
       return False
-    remaining_fraction = max(0.0, min(1.0, float(remaining_fraction)))
+    if isinstance(remaining_fraction, bool) or not isinstance(remaining_fraction, (int, float)):
+      return False
+    remaining_fraction = normalize_remaining_fraction(remaining_fraction)
     used_percent = (1 - remaining_fraction) * 100
     return used_percent >= threshold_percent
 

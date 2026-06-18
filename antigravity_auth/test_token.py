@@ -359,6 +359,25 @@ class TestToken(unittest.TestCase):
         self.assertEqual(active["refresh_token"], "old_refresh_123|proj_abc")
 
     @patch("urllib.request.urlopen")
+    def test_refresh_access_token_redacts_exception_text(self, mock_urlopen):
+        mock_urlopen.side_effect = RuntimeError(
+            "client_secret=test-client-secret refresh_token=old_refresh_123"
+        )
+
+        with self.assertRaises(AntigravityTokenRefreshError) as context:
+            refresh_access_token({
+                "refresh": "old_refresh_123|proj_abc",
+                "access": "old_access",
+                "expires": 0,
+                "email": "test@example.com",
+            })
+
+        message = str(context.exception)
+        self.assertNotIn("test-client-secret", message)
+        self.assertNotIn("old_refresh_123", message)
+        self.assertIn("[REDACTED]", message)
+
+    @patch("urllib.request.urlopen")
     def test_invalid_grant_persist_rehomes_active_auth_to_remaining_account(self, mock_urlopen):
         self._mock_invalid_grant(mock_urlopen)
 

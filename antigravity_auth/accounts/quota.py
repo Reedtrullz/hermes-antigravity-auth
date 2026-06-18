@@ -111,8 +111,10 @@ def is_over_soft_quota_threshold(
   remaining_fraction = group_data.get("remainingFraction")
   if remaining_fraction is None:
     return False
+  if isinstance(remaining_fraction, bool) or not isinstance(remaining_fraction, (int, float)):
+    return False
 
-  remaining_fraction = max(0.0, min(1.0, float(remaining_fraction)))
+  remaining_fraction = normalize_remaining_fraction(remaining_fraction)
   used_percent = (1 - remaining_fraction) * 100
   return used_percent >= threshold_percent
 

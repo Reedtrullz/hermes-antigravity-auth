@@ -307,13 +307,22 @@ def _check_oauth_client_credentials() -> DoctorRow:
   try:
     from .credentials import credential_file_path, resolve_oauth_credentials
     client_id, client_secret = resolve_oauth_credentials()
+    path = credential_file_path()
+    mode = _path_mode(path) if path.exists() else None
+    if mode is not None and mode & 0o077:
+      return _row(
+        "WARN",
+        "OAuth client credentials",
+        f"{path} permissions are {oct(mode)}",
+        f"Run chmod 600 {path}.",
+      )
     if client_id and client_secret:
       return _row("PASS", "OAuth client credentials", "configured from environment or Hermes Antigravity credential file")
     return _row(
       "WARN",
       "OAuth client credentials",
-      f"not configured; {credential_file_path()} is missing or incomplete and env vars are unset",
-      "Run hermes antigravity set-credentials --client-id <id> --client-secret <secret>.",
+      f"not configured; {path} is missing or incomplete and env vars are unset",
+      "Run hermes antigravity set-credentials --client-id <id> and enter the secret at the hidden prompt.",
     )
   except Exception as exc:
     return _row("FAIL", "OAuth client credentials", f"could not inspect credentials: {exc}", "Run hermes antigravity set-credentials.")
@@ -403,5 +412,7 @@ def format_doctor_rows(rows: list[DoctorRow]) -> str:
   return "\n".join(lines)
 
 
-def print_doctor() -> None:
-  print(format_doctor_rows(run_doctor()))
+def print_doctor() -> bool:
+  rows = run_doctor()
+  print(format_doctor_rows(rows))
+  return not any(row.status == "FAIL" for row in rows)

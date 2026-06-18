@@ -39,8 +39,15 @@ package installed in Hermes' Python.
 ### 2. Provide OAuth client credentials
 
 Before running `hermes antigravity login`, create a Google OAuth desktop client
-with authorized redirect URI `http://localhost:51121/oauth-callback`, then
-provide its values via environment variables:
+with authorized redirect URI `http://localhost:51121/oauth-callback`, then store
+its values in Hermes home:
+
+```bash
+hermes antigravity set-credentials --client-id "your-client-id.apps.googleusercontent.com"
+```
+
+The command prompts for `ANTIGRAVITY_CLIENT_SECRET` with hidden input.
+For automation, environment variables are also supported:
 
 ```bash
 export ANTIGRAVITY_CLIENT_ID="your-client-id.apps.googleusercontent.com"
