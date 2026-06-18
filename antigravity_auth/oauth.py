@@ -125,7 +125,6 @@ def authorize_antigravity(project_id: str = "") -> dict:
     url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
     return {
         "url": url,
-        "verifier": pkce["verifier"],
         "state": encoded_state,
         "projectId": project_id or "",
         "project_id": project_id or "",

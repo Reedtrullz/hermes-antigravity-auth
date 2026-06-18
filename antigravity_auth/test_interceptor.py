@@ -737,6 +737,37 @@ class TestRequestHook(unittest.TestCase):
         self.assertEqual(stored["lastUsed"], 1234)
         self.assertEqual(account.refresh_parts.refresh_token, "new-refresh")
 
+    def test_persist_managed_state_writes_rate_limit_failure_state(self):
+        from antigravity_auth.accounts.manager import AccountManager
+        from antigravity_auth.interceptor import _persist_managed_account_state
+        from antigravity_auth.storage import load_accounts, save_accounts
+
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "limited@example.com",
+                "refreshToken": "limited-refresh",
+                "projectId": "limited-project",
+            }],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+        manager = AccountManager.load_from_disk()
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+        account.consecutive_failures = 2
+        account.last_failure_time = 123456
+        account.rate_limit_reset_times.set("gemini-antigravity", 999999)
+
+        self.assertTrue(_persist_managed_account_state(account, family="gemini"))
+
+        stored = load_accounts()["accounts"][0]
+        self.assertEqual(stored["consecutiveFailures"], 2)
+        self.assertEqual(stored["lastFailureTime"], 123456)
+        self.assertEqual(stored["rateLimitResetTimes"], {"gemini-antigravity": 999999})
+
     def test_request_hook_uses_selected_account_fingerprint(self):
         from antigravity_auth.interceptor import _antigravity_request_hook
 

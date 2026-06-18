@@ -281,7 +281,6 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
         print(str(exc))
         return False
     auth_url = auth_data["url"]
-    verifier = auth_data["verifier"]
 
     print("=" * 60)
     print("Initiating Google Antigravity OAuth flow...")
@@ -735,10 +734,14 @@ def check_quotas_and_verify():
     accounts = accounts_data.get("accounts", [])
     if not accounts:
         print("No accounts registered.")
-        return
+        return False
 
     print("\nVerifying Account Status & Quotas:")
     print("=" * 60)
+    hard_failure = False
+    quota_attempts = 0
+    quota_successes = 0
+    quota_cache_updates = []
     for idx, acc in enumerate(accounts):
         email = acc.get("email", "Unknown")
         project_id = acc.get("projectId") or ""
@@ -746,6 +749,7 @@ def check_quotas_and_verify():
         refresh_token = acc.get("refreshToken", "")
         if not refresh_token:
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (Missing credentials)")
+            hard_failure = True
             continue
 
         packed_refresh = format_refresh_parts({
@@ -761,22 +765,39 @@ def check_quotas_and_verify():
             access_token = refreshed.get("access", "")
         except Exception:
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (Token refresh error)")
+            hard_failure = True
             continue
 
         if not access_token:
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> FAILED (No access token)")
+            hard_failure = True
             continue
 
         # Fetch live quota from Antigravity API
-        from .accounts.quota import fetch_quota_from_api
+        from .accounts.quota import fetch_quota_from_api, quota_buckets_to_groups
+        quota_attempts += 1
         quota = fetch_quota_from_api(access_token, project_id)
 
         if quota is None:
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> Token valid, quota fetch failed")
             continue
+        quota_successes += 1
 
         print(f"[{idx}] {email} (Project: {project_id or '<none>'})")
         if isinstance(quota, list):
+            quota_groups = quota_buckets_to_groups(quota)
+            if quota_groups:
+                quota_cache_updates.append({
+                    "index": idx,
+                    "identity": {
+                        "email": acc.get("email"),
+                        "refreshToken": refresh_token,
+                        "projectId": project_id,
+                        "managedProjectId": acc.get("managedProjectId") or "",
+                    },
+                    "quotaGroups": quota_groups,
+                    "updatedAt": time.time() * 1000,
+                })
             for bucket in quota:
                 if not isinstance(bucket, dict):
                     continue
@@ -804,7 +825,33 @@ def check_quotas_and_verify():
         except Exception:
             pass  # health probe is informational only — never fail the check command
 
+    if quota_cache_updates:
+        def update_cached_quota(storage):
+            stored_accounts = storage.get("accounts", [])
+            if not isinstance(stored_accounts, list):
+                return
+            for update in quota_cache_updates:
+                target = _find_account_by_identity(
+                    stored_accounts,
+                    update["identity"],
+                    preferred_index=update["index"],
+                )
+                if target is None:
+                    continue
+                target["cachedQuota"] = update["quotaGroups"]
+                target["cachedQuotaUpdatedAt"] = update["updatedAt"]
+
+        try:
+            update_accounts(update_cached_quota)
+        except Exception:
+            pass
+
     print("=" * 60)
+    if hard_failure:
+        return False
+    if quota_attempts > 0 and quota_successes == 0:
+        return False
+    return True
 
 
 def interactive_accounts_menu():
@@ -1088,7 +1135,8 @@ def handle_cli(args):
             if not set_credentials(client_id=args.client_id, client_secret=args.client_secret):
                 sys.exit(1)
         elif args.action in ("quota", "check"):
-            check_quotas_and_verify()
+            if not check_quotas_and_verify():
+                sys.exit(1)
         elif args.action == "doctor":
             from .doctor import print_doctor
             if not print_doctor():

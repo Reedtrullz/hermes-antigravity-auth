@@ -7,6 +7,7 @@ from antigravity_auth.accounts.quota import (
     is_over_soft_quota_threshold,
     normalize_remaining_fraction,
     parse_reset_time,
+    quota_buckets_to_groups,
     resolve_quota_group,
 )
 
@@ -35,6 +36,9 @@ class TestNormalizeRemainingFraction(unittest.TestCase):
 
     def test_int_value(self):
         self.assertEqual(normalize_remaining_fraction(0), 0.0)
+
+    def test_bool_returns_zero(self):
+        self.assertEqual(normalize_remaining_fraction(True), 0.0)
 
 
 class TestClassifyQuotaGroup(unittest.TestCase):
@@ -67,6 +71,41 @@ class TestClassifyQuotaGroup(unittest.TestCase):
 
     def test_claude_sonnet_returns_claude(self):
         self.assertEqual(classify_quota_group("claude-sonnet-4"), "claude")
+
+
+class TestQuotaBucketsToGroups(unittest.TestCase):
+    def test_classifies_and_keeps_most_restrictive_bucket_per_group(self):
+        groups = quota_buckets_to_groups([
+            {
+                "modelId": "gemini-3-pro-preview",
+                "remainingFraction": 0.5,
+                "resetTime": "2026-06-18T12:00:00Z",
+            },
+            {
+                "modelId": "gemini-3-pro-preview-alt",
+                "remainingFraction": 0.2,
+            },
+            {
+                "modelId": "gemini-3-flash-preview",
+                "remainingFraction": 1.5,
+            },
+            {
+                "modelId": "unknown",
+                "remainingFraction": 0.01,
+            },
+        ])
+
+        self.assertEqual(groups["gemini-pro"]["remainingFraction"], 0.2)
+        self.assertEqual(groups["gemini-flash"]["remainingFraction"], 1.0)
+        self.assertNotIn("unknown", groups)
+
+    def test_skips_malformed_remaining_fraction(self):
+        groups = quota_buckets_to_groups([
+            {"modelId": "gemini-3-pro-preview", "remainingFraction": "unknown"},
+            {"modelId": "claude-sonnet-4", "remainingFraction": True},
+        ])
+
+        self.assertEqual(groups, {})
 
 
 class TestResolveQuotaGroup(unittest.TestCase):

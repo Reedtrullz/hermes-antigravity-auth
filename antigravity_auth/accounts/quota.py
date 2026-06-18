@@ -17,6 +17,8 @@ QuotaGroup = str  # "claude" | "gemini-pro" | "gemini-flash"
 def normalize_remaining_fraction(value: Any) -> float:
   if not isinstance(value, (int, float)):
     return 0.0
+  if isinstance(value, bool):
+    return 0.0
   if value < 0:
     return 0.0
   if value > 1:
@@ -67,6 +69,36 @@ def classify_quota_group(model_name: str, display_name: str | None = None) -> Qu
   if "flash" in combined:
     return "gemini-flash"
   return "gemini-pro"
+
+
+def quota_buckets_to_groups(buckets: list[Any]) -> dict[str, dict[str, Any]]:
+  """Convert raw quota buckets into selection-cache quota groups."""
+  groups: dict[str, dict[str, Any]] = {}
+  for bucket in buckets:
+    if not isinstance(bucket, dict):
+      continue
+    model_id = bucket.get("modelId")
+    if not isinstance(model_id, str):
+      continue
+    display_name = bucket.get("displayName")
+    if not isinstance(display_name, str):
+      display_name = bucket.get("modelDisplayName")
+    group = classify_quota_group(model_id, display_name if isinstance(display_name, str) else None)
+    if group is None:
+      continue
+    remaining = bucket.get("remainingFraction")
+    if isinstance(remaining, bool) or not isinstance(remaining, (int, float)):
+      continue
+    group_data: dict[str, Any] = {
+      "remainingFraction": normalize_remaining_fraction(remaining),
+    }
+    for key in ("resetTime", "used", "limit"):
+      if key in bucket:
+        group_data[key] = bucket[key]
+    existing = groups.get(group)
+    if existing is None or group_data["remainingFraction"] < existing.get("remainingFraction", 1):
+      groups[group] = group_data
+  return groups
 
 
 def compute_soft_quota_cache_ttl_ms(

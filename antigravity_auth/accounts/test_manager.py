@@ -94,6 +94,66 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         self.assertEqual(manager.get_account_count(), 1)
         self.assertEqual(manager.get_total_account_count(), 1)
 
+    def test_load_and_save_preserves_rate_limit_failure_state(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [{
+                "email": "quota@example.com",
+                "refreshToken": "refresh-quota",
+                "projectId": "proj-quota",
+                "consecutiveFailures": 3,
+                "lastFailureTime": 123456,
+                "rateLimitResetTimes": {"gemini-antigravity": 999999},
+            }],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+        self.assertEqual(account.consecutive_failures, 3)
+        self.assertEqual(account.last_failure_time, 123456)
+
+        account.consecutive_failures = 4
+        account.last_failure_time = 234567
+        with mock.patch(
+            "antigravity_auth.storage.get_accounts_json_path",
+            return_value=self.accounts_path,
+        ):
+            self.assertTrue(manager.save_to_disk())
+
+        with open(self.accounts_path, "r", encoding="utf-8") as f:
+            stored = json.load(f)["accounts"][0]
+        self.assertEqual(stored["consecutiveFailures"], 4)
+        self.assertEqual(stored["lastFailureTime"], 234567)
+        self.assertEqual(stored["rateLimitResetTimes"], {"gemini-antigravity": 999999})
+
+    def test_request_success_clears_failure_counter_and_timestamp(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [{
+                "email": "recover@example.com",
+                "refreshToken": "refresh-recover",
+                "projectId": "proj-recover",
+                "consecutiveFailures": 2,
+                "lastFailureTime": 123456,
+            }],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+
+        manager.mark_request_success(account)
+
+        self.assertEqual(account.consecutive_failures, 0)
+        self.assertIsNone(account.last_failure_time)
+
     def test_snapshot_redacts_refresh_and_access_tokens(self) -> None:
         data = {
             "version": 4,

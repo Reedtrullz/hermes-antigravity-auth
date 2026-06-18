@@ -146,6 +146,16 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, 1)
 
+    def test_handle_cli_exits_nonzero_when_check_fails(self):
+        args = MagicMock()
+        args.action = "check"
+
+        with patch.object(cli_module, "check_quotas_and_verify", return_value=False):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_module.handle_cli(args)
+
+        self.assertEqual(ctx.exception.code, 1)
+
     def test_run_login_flow_manual_code_only_uses_returned_state(self):
         auth_data = {
             "url": "https://auth",
@@ -653,9 +663,76 @@ class TestCli(unittest.TestCase):
         with patch("antigravity_auth.token.refresh_access_token", side_effect=fake_refresh), \
              patch("antigravity_auth.accounts.quota.fetch_quota_from_api", return_value=[]), \
              patch("antigravity_auth.verification.verify_account_access"):
-            check_quotas_and_verify()
+            result = check_quotas_and_verify()
 
         self.assertEqual(calls, ["raw-refresh|proj-1"])
+        self.assertTrue(result)
+
+    def test_check_quotas_returns_false_with_no_accounts(self):
+        with patch("builtins.print"):
+            self.assertFalse(check_quotas_and_verify())
+
+    def test_check_quotas_returns_false_when_token_refresh_fails(self):
+        from .storage import save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "proj-1",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+
+        with patch("antigravity_auth.token.refresh_access_token", side_effect=RuntimeError("offline")), \
+             patch("builtins.print"):
+            self.assertFalse(check_quotas_and_verify())
+
+    def test_check_quotas_returns_false_when_all_quota_fetches_fail(self):
+        from .storage import save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "proj-1",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+
+        with patch("antigravity_auth.token.refresh_access_token", return_value={"access": "access"}), \
+             patch("antigravity_auth.accounts.quota.fetch_quota_from_api", return_value=None), \
+             patch("builtins.print"):
+            self.assertFalse(check_quotas_and_verify())
+
+    def test_check_quotas_persists_soft_quota_cache(self):
+        from .storage import load_accounts, save_accounts
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "proj-1",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+
+        with patch("antigravity_auth.token.refresh_access_token", return_value={"access": "access"}), \
+             patch("antigravity_auth.accounts.quota.fetch_quota_from_api", return_value=[
+                 {"modelId": "gemini-3-pro-preview", "remainingFraction": 0.08},
+                 {"modelId": "gemini-3-flash-preview", "remainingFraction": 0.42},
+             ]), \
+             patch("antigravity_auth.verification.verify_account_access"), \
+             patch("builtins.print"):
+            self.assertTrue(check_quotas_and_verify())
+
+        stored = load_accounts()["accounts"][0]
+        self.assertEqual(stored["cachedQuota"]["gemini-pro"]["remainingFraction"], 0.08)
+        self.assertEqual(stored["cachedQuota"]["gemini-flash"]["remainingFraction"], 0.42)
+        self.assertIsInstance(stored["cachedQuotaUpdatedAt"], float)
 
     def test_account_switch_syncs_rotated_packed_refresh_with_managed_project_id(self):
         from .storage import save_accounts

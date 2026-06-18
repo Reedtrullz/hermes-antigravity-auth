@@ -90,7 +90,7 @@ class TestOAuth(unittest.TestCase):
              patch('antigravity_auth.oauth.ANTIGRAVITY_SCOPES', ['scope1', 'scope2']):
             result = authorize_antigravity(project_id='test_project')
             self.assertIn('url', result)
-            self.assertIn('verifier', result)
+            self.assertNotIn('verifier', result)
             self.assertIn('projectId', result)
             self.assertEqual(result['projectId'], 'test_project')
             self.assertEqual(result['project_id'], 'test_project')

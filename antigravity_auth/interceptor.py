@@ -321,6 +321,15 @@ def _sync_managed_account_from_dict(account: Any, account_dict: dict[str, Any]) 
   except Exception:
     pass
   try:
+    failures = account_dict.get("consecutiveFailures")
+    if isinstance(failures, (int, float)) and not isinstance(failures, bool):
+      account.consecutive_failures = max(0, int(failures))
+    failure_time = _coerce_expires_ms(account_dict.get("lastFailureTime"))
+    if failure_time is not None:
+      account.last_failure_time = failure_time
+  except Exception:
+    pass
+  try:
     account.access = account_dict.get("accessToken") or account_dict.get("access") or getattr(account, "access", None)
     account.expires = (
       account_dict.get("accessTokenExpiresAt")
@@ -458,6 +467,19 @@ def _persist_managed_account_state(
         stored_account["rateLimitResetTimes"] = rl_dict
       else:
         stored_account.pop("rateLimitResetTimes", None)
+    except Exception:
+      pass
+    try:
+      failures = getattr(account, "consecutive_failures", 0)
+      if isinstance(failures, (int, float)) and not isinstance(failures, bool) and int(failures) > 0:
+        stored_account["consecutiveFailures"] = int(failures)
+      else:
+        stored_account.pop("consecutiveFailures", None)
+      failure_time = _coerce_expires_ms(getattr(account, "last_failure_time", None))
+      if failure_time is not None:
+        stored_account["lastFailureTime"] = failure_time
+      else:
+        stored_account.pop("lastFailureTime", None)
     except Exception:
       pass
     cooldown_until = getattr(account, "cooling_down_until", None)

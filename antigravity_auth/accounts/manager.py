@@ -41,6 +41,12 @@ def _clamp_non_negative_int(value: Any, fallback: int) -> int:
   return max(0, int(value))
 
 
+def _coerce_non_negative_int(value: Any, fallback: int = 0) -> int:
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return fallback
+  return max(0, int(value))
+
+
 def _coerce_ms(value: Any) -> int | None:
   if isinstance(value, bool) or not isinstance(value, (int, float)):
     return None
@@ -127,6 +133,14 @@ def _merge_newer_current_account_fields(snapshot: dict[str, Any], current: dict[
     snapshot["coolingDownUntil"] = current.get("coolingDownUntil")
     if "cooldownReason" in current:
       snapshot["cooldownReason"] = current.get("cooldownReason")
+
+  current_failure_time = _coerce_ms(current.get("lastFailureTime"))
+  snapshot_failure_time = _coerce_ms(snapshot.get("lastFailureTime"))
+  if current_failure_time is not None and (
+    snapshot_failure_time is None or current_failure_time > snapshot_failure_time
+  ):
+    snapshot["lastFailureTime"] = current.get("lastFailureTime")
+    snapshot["consecutiveFailures"] = _coerce_non_negative_int(current.get("consecutiveFailures"), 0)
 
 
 class AccountManager:
@@ -228,6 +242,8 @@ class AccountManager:
         ),
         cooling_down_until=acc_data.get("coolingDownUntil"),
         cooldown_reason=acc_data.get("cooldownReason"),
+        consecutive_failures=_coerce_non_negative_int(acc_data.get("consecutiveFailures"), 0),
+        last_failure_time=_coerce_ms(acc_data.get("lastFailureTime")),
         fingerprint=acc_data.get("fingerprint"),
         fingerprint_history=acc_data.get("fingerprintHistory"),
         cached_quota=acc_data.get("cachedQuota"),
@@ -485,6 +501,7 @@ class AccountManager:
   def mark_request_success(self, account: ManagedAccount) -> None:
     if account.consecutive_failures:
       account.consecutive_failures = 0
+      account.last_failure_time = None
       self._health_tracker.record_success(account.index)
 
   def has_other_account_with_antigravity_available(
@@ -585,6 +602,10 @@ class AccountManager:
       rl_dict = a.rate_limit_reset_times.to_dict()
       if rl_dict:
         acc_dict["rateLimitResetTimes"] = rl_dict
+      if a.consecutive_failures:
+        acc_dict["consecutiveFailures"] = int(a.consecutive_failures)
+      if a.last_failure_time is not None:
+        acc_dict["lastFailureTime"] = a.last_failure_time
 
       if a.cooling_down_until is not None:
         acc_dict["coolingDownUntil"] = a.cooling_down_until
