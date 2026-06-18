@@ -178,6 +178,33 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("could not patch aliases", provider_rows[0].detail)
         self.assertIn("google-gemini-cli", provider_rows[0].fix)
 
+    def test_doctor_reports_installed_file_wrappers(self):
+        from pathlib import Path
+        from antigravity_auth.doctor import _check_installed_wrappers
+        from antigravity_auth.install_plugins import install_plugins
+
+        install_plugins(Path(self.temp_dir.name))
+        rows = _check_installed_wrappers()
+        checks = {row.check: row for row in rows}
+
+        self.assertEqual(checks["CLI file plugin"].status, "PASS")
+        self.assertEqual(checks["provider file plugin"].status, "PASS")
+
+    def test_doctor_fails_malformed_file_wrapper_manifest(self):
+        from pathlib import Path
+        from antigravity_auth.doctor import _check_installed_wrappers
+
+        cli_dir = Path(self.temp_dir.name) / "plugins" / "antigravity-cli"
+        cli_dir.mkdir(parents=True)
+        (cli_dir / "__init__.py").write_text("load_cli_register\n", encoding="utf-8")
+        (cli_dir / "plugin.yaml").write_text("name: wrong\nkind: standalone\n", encoding="utf-8")
+
+        rows = _check_installed_wrappers()
+        cli_rows = [row for row in rows if row.check == "CLI file plugin"]
+
+        self.assertEqual(cli_rows[0].status, "FAIL")
+        self.assertIn("name=wrong", cli_rows[0].detail)
+
     def test_doctor_reports_missing_oauth_client_credentials(self):
         from antigravity_auth.doctor import _check_oauth_client_credentials
 

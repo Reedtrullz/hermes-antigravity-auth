@@ -203,6 +203,72 @@ def _check_provider_registration() -> list[DoctorRow]:
   return rows
 
 
+def _parse_plugin_yaml(text: str) -> dict[str, str]:
+  parsed: dict[str, str] = {}
+  for raw_line in text.splitlines():
+    line = raw_line.strip()
+    if not line or line.startswith("#") or ":" not in line:
+      continue
+    key, value = line.split(":", 1)
+    parsed[key.strip()] = value.strip().strip("'\"")
+  return parsed
+
+
+def _check_installed_wrapper(
+  label: str,
+  directory: Path,
+  expected_name: str,
+  expected_kind: str,
+  init_marker: str,
+) -> DoctorRow:
+  install_fix = "Run hermes-antigravity-install to write Hermes file-plugin wrappers."
+  if not directory.exists():
+    return _row("WARN", label, f"{directory} is not installed", install_fix)
+  init_path = directory / "__init__.py"
+  yaml_path = directory / "plugin.yaml"
+  missing = [str(path.name) for path in (init_path, yaml_path) if not path.exists()]
+  if missing:
+    return _row("WARN", label, f"{directory} is missing " + ", ".join(missing), install_fix)
+  try:
+    init_text = init_path.read_text(encoding="utf-8")
+    yaml_text = yaml_path.read_text(encoding="utf-8")
+  except Exception as exc:
+    return _row("FAIL", label, f"could not read wrapper files in {directory}: {exc}", install_fix)
+  if init_marker not in init_text:
+    return _row("FAIL", label, f"{init_path} does not load the expected Antigravity contract", install_fix)
+  parsed_yaml = _parse_plugin_yaml(yaml_text)
+  actual_name = parsed_yaml.get("name")
+  actual_kind = parsed_yaml.get("kind")
+  if actual_name != expected_name or actual_kind != expected_kind:
+    return _row(
+      "FAIL",
+      label,
+      f"{yaml_path} has name={actual_name or '<missing>'}, kind={actual_kind or '<missing>'}",
+      install_fix,
+    )
+  return _row("PASS", label, f"{directory} wrapper is installed")
+
+
+def _check_installed_wrappers() -> list[DoctorRow]:
+  hermes_home = get_hermes_home()
+  return [
+    _check_installed_wrapper(
+      "CLI file plugin",
+      hermes_home / "plugins" / "antigravity-cli",
+      "antigravity-cli",
+      "standalone",
+      "load_cli_register",
+    ),
+    _check_installed_wrapper(
+      "provider file plugin",
+      hermes_home / "plugins" / "model-providers" / "antigravity",
+      "antigravity",
+      "model-provider",
+      "load_provider_namespace",
+    ),
+  ]
+
+
 def _check_account_store_locking() -> DoctorRow:
   backend, detail = _probe_process_file_lock()
   if backend in ("fcntl", "msvcrt"):
@@ -382,6 +448,7 @@ def run_doctor() -> list[DoctorRow]:
   rows.extend(_check_routing_health())
   rows.append(_check_retry_behavior())
   rows.extend(_check_provider_registration())
+  rows.extend(_check_installed_wrappers())
   rows.append(_check_account_store_locking())
   rows.extend(_check_account_store())
   rows.extend(_check_auth_files())
