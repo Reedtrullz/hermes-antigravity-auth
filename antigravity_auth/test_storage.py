@@ -39,6 +39,17 @@ class TestStorage(unittest.TestCase):
         self.assertTrue(home_path.is_dir())
         self.assertEqual(home_path, Path(self.temp_dir.name).resolve())
 
+    def test_get_hermes_home_repairs_private_permissions(self):
+        import stat
+
+        old_umask = os.umask(0)
+        try:
+            home_path = get_hermes_home()
+        finally:
+            os.umask(old_umask)
+
+        self.assertEqual(stat.S_IMODE(os.stat(home_path).st_mode), 0o700)
+
     def test_paths(self):
         auth_path = get_auth_json_path()
         accounts_path = get_accounts_json_path()
@@ -418,11 +429,11 @@ class TestStorage(unittest.TestCase):
         auth_json_sync.assert_called_once()
         google_sync.assert_called_once()
 
-    def test_sync_token_to_all_auth_stores_reports_auth_json_failure_independently(self):
+    def test_sync_token_to_all_auth_stores_skips_google_oauth_when_auth_json_fails(self):
         from antigravity_auth.auth_sync import sync_token_to_all_auth_stores, sync_token_to_all_auth_stores_bool
 
         with patch("antigravity_auth.auth_sync.sync_token_to_auth_json", side_effect=RuntimeError("boom")), \
-             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=True):
+             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=True) as google_sync:
             result = sync_token_to_all_auth_stores(
                 access_token="acc_111",
                 refresh_token="ref_222|proj_333",
@@ -431,12 +442,13 @@ class TestStorage(unittest.TestCase):
             )
 
         self.assertEqual(result.auth_json, False)
-        self.assertEqual(result.google_oauth, True)
+        self.assertEqual(result.google_oauth, False)
         self.assertEqual(result.ok, False)
         self.assertEqual(bool(result), False)
+        google_sync.assert_not_called()
 
         with patch("antigravity_auth.auth_sync.sync_token_to_auth_json", side_effect=RuntimeError("boom")), \
-             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=True):
+             patch("antigravity_auth.auth_sync.sync_token_to_google_oauth", return_value=True) as google_sync:
             self.assertEqual(
                 sync_token_to_all_auth_stores_bool(
                     access_token="acc_111",
@@ -446,6 +458,7 @@ class TestStorage(unittest.TestCase):
                 ),
                 False,
             )
+        google_sync.assert_not_called()
 
 
 if __name__ == "__main__":

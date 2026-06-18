@@ -185,6 +185,10 @@ def get_hermes_home() -> Path:
     else:
         path = Path("~/.hermes").expanduser().resolve()
     path.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except Exception:
+        pass
     return path
 
 

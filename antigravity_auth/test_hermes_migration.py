@@ -115,6 +115,36 @@ class TestHermesMigrationIntegration(unittest.TestCase):
         with patch.dict(sys.modules, {"agent.google_oauth": None}):
             self.assertFalse(sync_token_to_google_oauth("access", "refresh"))
 
+    def test_all_auth_store_sync_skips_google_oauth_when_auth_json_fails(self):
+        from antigravity_auth.auth_sync import sync_token_to_all_auth_stores
+
+        saved = []
+
+        class FakeGoogleCredentials:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        fake_agent = types.ModuleType("agent")
+        fake_google_oauth = types.ModuleType("agent.google_oauth")
+        fake_google_oauth.GoogleCredentials = FakeGoogleCredentials
+        fake_google_oauth.save_credentials = lambda credentials: saved.append(credentials)
+
+        with patch("antigravity_auth.auth_sync.sync_token_to_auth_json", side_effect=RuntimeError("no write")), \
+             patch.dict(sys.modules, {
+                 "agent": fake_agent,
+                 "agent.google_oauth": fake_google_oauth,
+             }):
+            result = sync_token_to_all_auth_stores(
+                "access",
+                "refresh|project",
+                project_id="project",
+                email="user@example.com",
+            )
+
+        self.assertFalse(result.auth_json)
+        self.assertFalse(result.google_oauth)
+        self.assertEqual(saved, [])
+
     def test_provider_plugin_bridges_antigravity_env_credentials(self):
         import importlib
         import antigravity_auth

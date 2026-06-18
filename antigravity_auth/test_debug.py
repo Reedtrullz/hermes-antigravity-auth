@@ -137,6 +137,25 @@ class TestInitializeDebug(unittest.TestCase):
             content = f.read()
         self.assertIn("[antigravity.test-module] info: test message", content)
 
+    def test_debug_request_urls_are_redacted(self):
+        from antigravity_auth.debug import start_antigravity_debug_request
+
+        initialize_debug(True, log_dir=self.temp_dir.name)
+        request_id = start_antigravity_debug_request({
+            "method": "POST",
+            "resolvedUrl": "https://example.test/path?access_token=access-secret&key=api-secret",
+            "originalUrl": "https://example.test/oauth?code=oauth-code&client_secret=client-secret",
+            "headers": {},
+        })
+
+        self.assertIsNotNone(request_id)
+        path = get_log_file_path()
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+        for secret in ("access-secret", "api-secret", "oauth-code", "client-secret"):
+            self.assertNotIn(secret, content)
+        self.assertIn("[REDACTED]", content)
+
     def test_debug_log_file_is_private(self):
         import os
         import stat

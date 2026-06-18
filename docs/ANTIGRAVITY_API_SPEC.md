@@ -351,7 +351,7 @@ The underlying API uses these tool formats:
 { "type": { "enum": ["email"] } }
 ```
 
-**Runtime note:** The Cloud Code request wrapper in `interceptor._apply_claude_transforms` currently only applies Claude runtime fixes (VALIDATED mode, thinking key normalization, tool-call IDs elsewhere, and the empty-object `_placeholder`). It does **not** run the full schema sanitizer unless the request path has already called `clean_json_schema()` / `to_gemini_schema()` from the transform utilities.
+**Runtime note:** The Cloud Code request wrapper in `interceptor._apply_claude_transforms` applies Claude runtime fixes (VALIDATED mode, thinking key normalization, tool-call IDs elsewhere, and empty-object `_placeholder`) and sanitizes tool `functionDeclarations[].parameters` with `clean_json_schema()` before they are sent to Antigravity.
 
 ---
 

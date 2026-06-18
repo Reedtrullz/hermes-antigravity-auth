@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +44,12 @@ def _load_file_credentials() -> tuple[str, str]:
 
   Missing, malformed, or non-object JSON files are treated as absent.
   """
+  path = _credential_file_path()
   try:
-    data = json.loads(_credential_file_path().read_text(encoding="utf-8"))
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+      os.chmod(path, 0o600)
+    data = json.loads(path.read_text(encoding="utf-8"))
   except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
     return "", ""
 
@@ -61,12 +66,11 @@ def resolve_oauth_credentials() -> tuple[str, str]:
   env_client_id = os.environ.get("ANTIGRAVITY_CLIENT_ID", "").strip()
   env_client_secret = os.environ.get("ANTIGRAVITY_CLIENT_SECRET", "").strip()
 
-  if env_client_id and env_client_secret:
-    return env_client_id, env_client_secret
-
   file_client_id, file_client_secret = _load_file_credentials()
-  if file_client_id and file_client_secret:
-    return file_client_id, file_client_secret
+  client_id = env_client_id or file_client_id
+  client_secret = env_client_secret or file_client_secret
+  if client_id and client_secret:
+    return client_id, client_secret
 
   return "", ""
 

@@ -12,6 +12,7 @@ from ..constants import ANTIGRAVITY_DEFAULT_PROJECT_ID
 from ..redaction import redact_secrets
 from ..storage import get_accounts_json_path
 from .ratelimit import (
+    RateLimitTracker,
     clear_expired_rate_limits,
     get_quota_key,
     is_rate_limited_for_header_style,
@@ -136,8 +137,14 @@ def _merge_newer_current_account_fields(snapshot: dict[str, Any], current: dict[
 
   current_failure_time = _coerce_ms(current.get("lastFailureTime"))
   snapshot_failure_time = _coerce_ms(snapshot.get("lastFailureTime"))
+  snapshot_clears_failures = (
+    "lastFailureTime" in snapshot
+    and snapshot.get("lastFailureTime") is None
+    and _coerce_non_negative_int(snapshot.get("consecutiveFailures"), 0) == 0
+  )
   if current_failure_time is not None and (
-    snapshot_failure_time is None or current_failure_time > snapshot_failure_time
+    not snapshot_clears_failures
+    and (snapshot_failure_time is None or current_failure_time > snapshot_failure_time)
   ):
     snapshot["lastFailureTime"] = current.get("lastFailureTime")
     snapshot["consecutiveFailures"] = _coerce_non_negative_int(current.get("consecutiveFailures"), 0)
@@ -165,6 +172,7 @@ class AccountManager:
       "gemini": False,
     }
     self._health_tracker = HealthScoreTracker()
+    self._rate_limit_tracker = RateLimitTracker()
     self._lock = threading.Lock()
     self._save_pending: bool = False
     self._save_timer: threading.Timer | None = None
@@ -240,16 +248,16 @@ class AccountManager:
         rate_limit_reset_times=RateLimitState.from_dict(
           acc_data.get("rateLimitResetTimes")
         ),
-        cooling_down_until=acc_data.get("coolingDownUntil"),
+        cooling_down_until=_coerce_ms(acc_data.get("coolingDownUntil")),
         cooldown_reason=acc_data.get("cooldownReason"),
         consecutive_failures=_coerce_non_negative_int(acc_data.get("consecutiveFailures"), 0),
         last_failure_time=_coerce_ms(acc_data.get("lastFailureTime")),
         fingerprint=acc_data.get("fingerprint"),
         fingerprint_history=acc_data.get("fingerprintHistory"),
         cached_quota=acc_data.get("cachedQuota"),
-        cached_quota_updated_at=acc_data.get("cachedQuotaUpdatedAt"),
+        cached_quota_updated_at=_coerce_ms(acc_data.get("cachedQuotaUpdatedAt")),
         verification_required=acc_data.get("verificationRequired", False),
-        verification_required_at=acc_data.get("verificationRequiredAt"),
+        verification_required_at=_coerce_ms(acc_data.get("verificationRequiredAt")),
         verification_required_reason=acc_data.get("verificationRequiredReason"),
         verification_url=acc_data.get("verificationUrl"),
       )
@@ -492,6 +500,18 @@ class AccountManager:
     retry_after_ms: float | None = None,
     failure_ttl_ms: float = 3600_000,
   ) -> int:
+    quota_key = get_quota_key(family, header_style, model)
+    if self._rate_limit_tracker.is_duplicate(account.index, quota_key):
+      existing_reset = account.rate_limit_reset_times.get(quota_key)
+      if retry_after_ms is not None and retry_after_ms > 0:
+        candidate_reset = now_ms() + retry_after_ms
+        if existing_reset is None or candidate_reset > existing_reset:
+          account.rate_limit_reset_times.set(quota_key, candidate_reset)
+          existing_reset = candidate_reset
+      if existing_reset is None:
+        return 0
+      return max(0, int(existing_reset - now_ms()))
+
     result = mark_rate_limited_with_reason(
       account, family, header_style, model, reason, retry_after_ms, failure_ttl_ms,
     )
@@ -500,8 +520,10 @@ class AccountManager:
 
   def mark_request_success(self, account: ManagedAccount) -> None:
     if account.consecutive_failures:
+      cleared_at = now_ms()
       account.consecutive_failures = 0
       account.last_failure_time = None
+      setattr(account, "_failure_state_cleared_at", cleared_at)
       self._health_tracker.record_success(account.index)
 
   def has_other_account_with_antigravity_available(
@@ -546,6 +568,8 @@ class AccountManager:
     # Reindex
     for i, a in enumerate(self._accounts):
       a.index = i
+    self._health_tracker.clear()
+    self._rate_limit_tracker.clear()
     if not self._accounts:
       self._cursor = 0
       self._current_account_by_family["claude"] = -1
@@ -606,6 +630,9 @@ class AccountManager:
         acc_dict["consecutiveFailures"] = int(a.consecutive_failures)
       if a.last_failure_time is not None:
         acc_dict["lastFailureTime"] = a.last_failure_time
+      if not a.consecutive_failures and a.last_failure_time is None:
+        acc_dict["consecutiveFailures"] = 0
+        acc_dict["lastFailureTime"] = None
 
       if a.cooling_down_until is not None:
         acc_dict["coolingDownUntil"] = a.cooling_down_until

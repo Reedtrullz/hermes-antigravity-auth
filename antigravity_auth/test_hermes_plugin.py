@@ -200,6 +200,26 @@ class TestHermesPluginRegister(unittest.TestCase):
     finally:
       provider_mod._PROVIDER_DIAGNOSTICS[:] = original_diagnostics
 
+  def test_provider_diagnostics_redact_recorded_secret_text(self):
+    import antigravity_auth.hermes_provider_plugin as provider_mod
+
+    original_diagnostics = list(provider_mod._PROVIDER_DIAGNOSTICS)
+    provider_mod._PROVIDER_DIAGNOSTICS.clear()
+    try:
+      provider_mod._record(
+        "WARN",
+        "OAuth credential bridge",
+        "clientSecret=provider-secret",
+        "refreshToken=provider-refresh",
+      )
+      diagnostics = provider_mod.get_provider_diagnostics()
+      rendered = repr(diagnostics)
+      self.assertNotIn("provider-secret", rendered)
+      self.assertNotIn("provider-refresh", rendered)
+      self.assertIn("[REDACTED]", rendered)
+    finally:
+      provider_mod._PROVIDER_DIAGNOSTICS[:] = original_diagnostics
+
   def test_antigravity_models_include_claude(self):
     from antigravity_auth.hermes_provider_plugin import ANTIGRAVITY_MODELS
     claude_models = [m for m in ANTIGRAVITY_MODELS if "claude" in m.lower()]

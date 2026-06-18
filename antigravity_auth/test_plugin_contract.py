@@ -94,6 +94,9 @@ class TestPluginContract(unittest.TestCase):
         generated_provider_yaml.read_text(encoding="utf-8"),
         (repo_root / "plugins" / "model-providers" / "antigravity" / "plugin.yaml").read_text(encoding="utf-8"),
       )
+      generated_cli_text = generated_cli.read_text(encoding="utf-8")
+      self.assertIn("Target: antigravity_auth.plugin_contract", generated_cli_text)
+      self.assertIn("type(exc).__name__", generated_cli_text)
       self.assertIn(f"version: {__version__}", generated_cli_yaml.read_text(encoding="utf-8"))
       self.assertIn(f"version: {__version__}", generated_provider_yaml.read_text(encoding="utf-8"))
 

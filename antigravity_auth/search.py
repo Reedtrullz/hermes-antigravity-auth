@@ -16,6 +16,7 @@ try:
     get_antigravity_headers,
     get_platform,
   )
+  from .redaction import redact_secret_text
 except ImportError:
   from constants import (
     ANTIGRAVITY_ENDPOINT_PROD,
@@ -23,6 +24,7 @@ except ImportError:
     get_antigravity_headers,
     get_platform,
   )
+  from redaction import redact_secret_text
 
 SEARCH_MODEL = "gemini-3.5-flash-low"
 
@@ -160,7 +162,7 @@ def parse_search_response(data: dict[str, Any]) -> SearchResult:
 
   def _error_message(error_data: Any) -> str:
     if isinstance(error_data, dict):
-      return str(error_data.get("message", "Unknown error"))
+      return redact_secret_text(str(error_data.get("message", "Unknown error")))
     return "Unknown error"
 
   response = data.get("response")
@@ -302,18 +304,18 @@ def execute_search(
     return format_search_result(result)
   except urllib.error.HTTPError as e:
     try:
-      error_text = e.read().decode("utf-8", errors="ignore")
+      error_text = redact_secret_text(e.read().decode("utf-8", errors="ignore"))
     except Exception:
-      error_text = str(e)
+      error_text = redact_secret_text(str(e))
     return (
       f"## Search Error\n\n"
-      f"Failed to execute search: {e.code} {e.reason}\n\n"
+      f"Failed to execute search: {e.code} {redact_secret_text(str(e.reason))}\n\n"
       f"{error_text}\n\n"
       f"Please try again with a different query."
     )
   except Exception as e:
     return (
       f"## Search Error\n\n"
-      f"Failed to execute search: {e}.\n\n"
+      f"Failed to execute search: {redact_secret_text(str(e))}.\n\n"
       f"Please try again with a different query."
     )

@@ -307,5 +307,5 @@ def exchange_antigravity(code: str, state: str) -> dict:
         _log.debug("traceback", extra={"traceback": traceback.format_exc()})
         return {
             "type": "failed",
-            "error": str(error)
+            "error": format_error_for_log(error)
         }

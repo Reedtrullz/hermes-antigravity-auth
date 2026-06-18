@@ -67,3 +67,6 @@ class HealthScoreTracker:
 
   def is_usable(self, account_index: int) -> bool:
     return self.get_score(account_index) >= self._config["min_usable"]
+
+  def clear(self) -> None:
+    self._scores.clear()

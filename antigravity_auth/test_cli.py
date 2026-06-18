@@ -156,6 +156,17 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(ctx.exception.code, 1)
 
+    def test_handle_cli_exits_130_on_keyboard_interrupt(self):
+        args = MagicMock()
+        args.action = "check"
+
+        with patch.object(cli_module, "check_quotas_and_verify", side_effect=KeyboardInterrupt), \
+             patch("builtins.print"):
+            with self.assertRaises(SystemExit) as ctx:
+                cli_module.handle_cli(args)
+
+        self.assertEqual(ctx.exception.code, 130)
+
     def test_run_login_flow_manual_code_only_uses_returned_state(self):
         auth_data = {
             "url": "https://auth",
@@ -182,6 +193,7 @@ class TestCli(unittest.TestCase):
 
     def test_run_login_flow_returns_false_when_auth_json_sync_fails(self):
         from antigravity_auth.auth_sync import AuthSyncResult
+        from antigravity_auth.storage import load_accounts
 
         auth_data = {
             "url": "https://auth",
@@ -207,6 +219,7 @@ class TestCli(unittest.TestCase):
             success = run_login_flow(project_id="project_123", no_browser=True)
 
         self.assertFalse(success)
+        self.assertEqual(load_accounts()["accounts"], [])
         printed = "\n".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
         self.assertIn("Hermes auth.json could not be updated", printed)
         self.assertNotIn("SUCCESS: Successfully authenticated", printed)
@@ -667,6 +680,51 @@ class TestCli(unittest.TestCase):
 
         self.assertEqual(calls, ["raw-refresh|proj-1"])
         self.assertTrue(result)
+
+    def test_check_quotas_persists_rotated_refresh_and_access_cache(self):
+        from .accounts.manager import AccountManager
+        from .accounts.shared import set_global_manager
+        from .storage import load_accounts, save_accounts
+
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "raw-refresh",
+                "projectId": "proj-1",
+                "managedProjectId": "managed-1",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+        manager = AccountManager.load_from_disk()
+        set_global_manager(manager)
+
+        try:
+            with patch("antigravity_auth.token.refresh_access_token", return_value={
+                "access": "new-access",
+                "refresh": "rotated-refresh|proj-2|managed-2",
+                "expires": 123456789,
+            }), patch("antigravity_auth.accounts.quota.fetch_quota_from_api", return_value=[
+                {"modelId": "gemini-3-pro-preview", "remainingFraction": 0.33},
+            ]), patch("antigravity_auth.verification.verify_account_access"), patch("builtins.print"):
+                self.assertTrue(check_quotas_and_verify())
+
+            stored = load_accounts()["accounts"][0]
+            self.assertEqual(stored["refreshToken"], "rotated-refresh")
+            self.assertEqual(stored["projectId"], "proj-2")
+            self.assertEqual(stored["managedProjectId"], "managed-2")
+            self.assertEqual(stored["accessToken"], "new-access")
+            self.assertEqual(stored["accessTokenExpiresAt"], 123456789)
+            self.assertIsInstance(stored["lastRefreshAt"], float)
+            self.assertEqual(stored["cachedQuota"]["gemini-pro"]["remainingFraction"], 0.33)
+            live_account = manager.get_account_by_index(0)
+            self.assertIsNotNone(live_account)
+            assert live_account is not None
+            self.assertEqual(live_account.refresh_parts.refresh_token, "rotated-refresh")
+            self.assertEqual(live_account.access, "new-access")
+        finally:
+            set_global_manager(None)
 
     def test_check_quotas_returns_false_with_no_accounts(self):
         with patch("builtins.print"):

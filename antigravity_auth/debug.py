@@ -249,12 +249,12 @@ def start_antigravity_debug_request(meta: dict) -> str | None:
     request_id = f"ANTIGRAVITY-{_request_counter}"
 
   method = meta.get("method", "GET")
-  resolved_url = meta.get("resolvedUrl", "")
+  resolved_url = redact_secret_text(str(meta.get("resolvedUrl", "")))
   _log_debug(f"[Antigravity Debug {request_id}] pid={os.getpid()} {method} {resolved_url}")
 
   original_url = meta.get("originalUrl")
-  if original_url and original_url != resolved_url:
-    _log_debug(f"[Antigravity Debug {request_id}] Original URL: {original_url}")
+  if original_url and original_url != meta.get("resolvedUrl", ""):
+    _log_debug(f"[Antigravity Debug {request_id}] Original URL: {redact_secret_text(str(original_url))}")
 
   project_id = meta.get("projectId")
   if project_id:

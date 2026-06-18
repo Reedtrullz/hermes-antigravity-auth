@@ -190,6 +190,21 @@ class TestDoctor(unittest.TestCase):
         self.assertEqual(checks["CLI file plugin"].status, "PASS")
         self.assertEqual(checks["provider file plugin"].status, "PASS")
 
+    def test_doctor_fails_wrapper_content_drift(self):
+        from pathlib import Path
+        from antigravity_auth.doctor import _check_installed_wrappers
+        from antigravity_auth.install_plugins import install_plugins
+
+        install_plugins(Path(self.temp_dir.name))
+        cli_init = Path(self.temp_dir.name) / "plugins" / "antigravity-cli" / "__init__.py"
+        cli_init.write_text(cli_init.read_text(encoding="utf-8") + "\n# stale local edit\n", encoding="utf-8")
+
+        rows = _check_installed_wrappers()
+        cli_rows = [row for row in rows if row.check == "CLI file plugin"]
+
+        self.assertEqual(cli_rows[0].status, "FAIL")
+        self.assertIn("content differs", cli_rows[0].detail)
+
     def test_doctor_fails_malformed_file_wrapper_manifest(self):
         from pathlib import Path
         from antigravity_auth.doctor import _check_installed_wrappers
@@ -204,6 +219,15 @@ class TestDoctor(unittest.TestCase):
 
         self.assertEqual(cli_rows[0].status, "FAIL")
         self.assertIn("name=wrong", cli_rows[0].detail)
+
+    def test_doctor_reports_hermes_home_permissions(self):
+        from antigravity_auth.doctor import _check_hermes_home_permissions
+
+        row = _check_hermes_home_permissions()
+
+        self.assertEqual(row.status, "PASS")
+        self.assertEqual(row.check, "Hermes home permissions")
+        self.assertIn("0o700", row.detail)
 
     def test_doctor_reports_missing_oauth_client_credentials(self):
         from antigravity_auth.doctor import _check_oauth_client_credentials

@@ -35,8 +35,24 @@ class TestCredentials(unittest.TestCase):
       }, clear=True):
         self.assertEqual(resolve_oauth_credentials(), ("file-id", "file-secret"))
 
-  def test_env_non_exhaustive_falls_through_to_file(self):
-    """When only one env var is set, env source is skipped — file wins."""
+  def test_world_readable_file_is_repaired_before_load(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      creds_file = Path(tmpdir) / "antigravity-credentials.json"
+      creds_file.write_text(json.dumps({
+        "client_id": "file-id",
+        "client_secret": "file-secret",
+      }), encoding="utf-8")
+      os.chmod(creds_file, 0o644)
+
+      with patch.dict("os.environ", {
+        "HERMES_HOME": tmpdir,
+      }, clear=True):
+        self.assertEqual(resolve_oauth_credentials(), ("file-id", "file-secret"))
+
+      self.assertEqual(stat.S_IMODE(os.stat(creds_file).st_mode), 0o600)
+
+  def test_env_non_exhaustive_merges_with_file(self):
+    """A partial env override is paired with the missing field from the file."""
     with tempfile.TemporaryDirectory() as tmpdir:
       creds_file = Path(tmpdir) / "antigravity-credentials.json"
       creds_file.write_text(json.dumps({
@@ -48,7 +64,7 @@ class TestCredentials(unittest.TestCase):
         "ANTIGRAVITY_CLIENT_ID": "env-id",  # only one set
         "HERMES_HOME": tmpdir,
       }, clear=True):
-        self.assertEqual(resolve_oauth_credentials(), ("file-id", "file-secret"))
+        self.assertEqual(resolve_oauth_credentials(), ("env-id", "file-secret"))
 
   def test_external_file_supports_antigravity_json_keys(self):
     with tempfile.TemporaryDirectory() as tmpdir:

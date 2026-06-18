@@ -179,7 +179,7 @@ def transform_messages_to_contents(
     content = msg.get("content")
     tool_calls = msg.get("tool_calls")
 
-    if role == "system":
+    if role in ("system", "developer"):
       if isinstance(content, str) and content:
         system_texts.append(content)
       elif isinstance(content, list):

@@ -366,8 +366,6 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
         new_account_index_holder["index"] = len(accounts) - 1
         normalize_active_indices_after_explicit_switch(accounts_data, new_account_index_holder["index"])
 
-    update_accounts(upsert_account)
-
     sync_result = sync_token_to_all_auth_stores(
         access_token=result.get("access", ""),
         refresh_token=refresh,
@@ -379,12 +377,15 @@ def run_login_flow(project_id: str = "", no_browser: bool = False) -> bool:
 
     if not _auth_sync_auth_json_ok(sync_result):
         print("-" * 60)
-        print("ERROR: Authentication was saved, but Hermes auth.json could not be updated.")
-        print("Runtime authorization may not be ready; please retry login or check file permissions.")
+        print("ERROR: Authentication succeeded, but Hermes auth.json could not be updated.")
+        print("No account was activated; please retry login or check file permissions.")
         print("-" * 60)
         return False
     if not _auth_sync_google_oauth_ok(sync_result):
         print("WARNING: Native google_oauth sync failed; auth.json credentials are active.")
+
+    update_accounts(upsert_account)
+    _reload_global_account_manager()
 
     print("-" * 60)
     print("SUCCESS: Successfully authenticated!")
@@ -600,6 +601,7 @@ def delete_account(email_or_index: str) -> bool:
         except Exception as exc:
             print(f"WARNING: Could not clear Hermes auth.json credentials: {exc}")
 
+    _reload_global_account_manager()
     return True
 
 
@@ -726,6 +728,7 @@ def set_account_project(email_or_index: str, project_id: str) -> bool:
         print("Note: account is not currently active; switch to it before using this project.")
     elif synced:
         print("Hermes runtime credentials updated.")
+    _reload_global_account_manager()
     return True
 
 
@@ -741,7 +744,7 @@ def check_quotas_and_verify():
     hard_failure = False
     quota_attempts = 0
     quota_successes = 0
-    quota_cache_updates = []
+    account_updates = []
     for idx, acc in enumerate(accounts):
         email = acc.get("email", "Unknown")
         project_id = acc.get("projectId") or ""
@@ -773,6 +776,20 @@ def check_quotas_and_verify():
             hard_failure = True
             continue
 
+        update_record = {
+            "index": idx,
+            "identity": {
+                "email": acc.get("email"),
+                "refreshToken": refresh_token,
+                "projectId": project_id,
+                "managedProjectId": acc.get("managedProjectId") or "",
+            },
+            "accessToken": access_token,
+            "refresh": refreshed.get("refresh") if isinstance(refreshed, dict) else None,
+            "expires": refreshed.get("expires") if isinstance(refreshed, dict) else None,
+            "updatedAt": time.time() * 1000,
+        }
+
         # Fetch live quota from Antigravity API
         from .accounts.quota import fetch_quota_from_api, quota_buckets_to_groups
         quota_attempts += 1
@@ -780,6 +797,7 @@ def check_quotas_and_verify():
 
         if quota is None:
             print(f"[{idx}] {email} (Project: {project_id or '<none>'}) -> Token valid, quota fetch failed")
+            account_updates.append(update_record)
             continue
         quota_successes += 1
 
@@ -787,17 +805,7 @@ def check_quotas_and_verify():
         if isinstance(quota, list):
             quota_groups = quota_buckets_to_groups(quota)
             if quota_groups:
-                quota_cache_updates.append({
-                    "index": idx,
-                    "identity": {
-                        "email": acc.get("email"),
-                        "refreshToken": refresh_token,
-                        "projectId": project_id,
-                        "managedProjectId": acc.get("managedProjectId") or "",
-                    },
-                    "quotaGroups": quota_groups,
-                    "updatedAt": time.time() * 1000,
-                })
+                update_record["quotaGroups"] = quota_groups
             for bucket in quota:
                 if not isinstance(bucket, dict):
                     continue
@@ -811,6 +819,7 @@ def check_quotas_and_verify():
                 print(line)
         else:
             print(f"    Raw response: {quota}")
+        account_updates.append(update_record)
 
         # ---- Account health probe (uses same access_token from above) ----
         try:
@@ -825,12 +834,12 @@ def check_quotas_and_verify():
         except Exception:
             pass  # health probe is informational only — never fail the check command
 
-    if quota_cache_updates:
-        def update_cached_quota(storage):
+    if account_updates:
+        def update_account_state(storage):
             stored_accounts = storage.get("accounts", [])
             if not isinstance(stored_accounts, list):
                 return
-            for update in quota_cache_updates:
+            for update in account_updates:
                 target = _find_account_by_identity(
                     stored_accounts,
                     update["identity"],
@@ -838,11 +847,30 @@ def check_quotas_and_verify():
                 )
                 if target is None:
                     continue
-                target["cachedQuota"] = update["quotaGroups"]
-                target["cachedQuotaUpdatedAt"] = update["updatedAt"]
+                refreshed_refresh = update.get("refresh")
+                if isinstance(refreshed_refresh, str) and refreshed_refresh:
+                    parsed = parse_refresh_parts(refreshed_refresh)
+                    if parsed.get("refreshToken"):
+                        target["refreshToken"] = parsed.get("refreshToken")
+                    if parsed.get("projectId") is not None:
+                        target["projectId"] = parsed.get("projectId")
+                    if parsed.get("managedProjectId") is not None:
+                        target["managedProjectId"] = parsed.get("managedProjectId")
+                access_token = update.get("accessToken")
+                if isinstance(access_token, str) and access_token:
+                    target["accessToken"] = access_token
+                    target["lastRefreshAt"] = update["updatedAt"]
+                expires = update.get("expires")
+                if isinstance(expires, (int, float)) and not isinstance(expires, bool):
+                    target["accessTokenExpiresAt"] = expires
+                quota_groups = update.get("quotaGroups")
+                if isinstance(quota_groups, dict) and quota_groups:
+                    target["cachedQuota"] = quota_groups
+                    target["cachedQuotaUpdatedAt"] = update["updatedAt"]
 
         try:
-            update_accounts(update_cached_quota)
+            update_accounts(update_account_state)
+            _reload_global_account_manager()
         except Exception:
             pass
 
@@ -953,6 +981,7 @@ def interactive_accounts_menu():
                                 set_active=True
                             )
                             _print_runtime_auth_sync_warnings(sync_result, "selected account")
+                            _reload_global_account_manager()
                             print(f"Set active account to: {acc.get('email')}")
                         else:
                             print("Invalid index.")
@@ -1151,4 +1180,4 @@ def handle_cli(args):
             interactive_accounts_menu()
     except KeyboardInterrupt:
         print("\nOperation cancelled by user.")
-        sys.exit(0)
+        sys.exit(130)

@@ -9,6 +9,11 @@ import json
 import re
 from typing import Any
 
+try:
+  from ..redaction import redact_secret_text
+except ImportError:
+  from redaction import redact_secret_text
+
 
 SYNTHETIC_THINKING_PLACEHOLDER = "[Thinking preserved]\n"
 DEBUG_MESSAGE_PREFIX = "[hermes-antigravity-auth debug]"
@@ -234,6 +239,39 @@ def _extract_usage_from_sse_payload(body: str) -> dict[str, Any] | None:
   return None
 
 
+def _extract_error_from_sse_payload(body: str) -> dict[str, Any] | None:
+  """Extract the first JSON SSE payload that looks like an error response."""
+  if not isinstance(body, str):
+    return None
+  lines = body.split("\n")
+  current_data: list[str] = []
+  for raw_line in lines:
+    line = raw_line.rstrip("\r")
+    if line.startswith("data:"):
+      data_value = line[5:]
+      if data_value.startswith(" "):
+        data_value = data_value[1:]
+      current_data.append(data_value)
+      continue
+    if line.strip() == "" and current_data:
+      data_str = "".join(current_data)
+      current_data = []
+      try:
+        parsed = json.loads(data_str)
+      except json.JSONDecodeError:
+        continue
+      if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+        return parsed
+  if current_data:
+    try:
+      parsed = json.loads("".join(current_data))
+    except json.JSONDecodeError:
+      return None
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), dict):
+      return parsed
+  return None
+
+
 def _extract_usage_values(usage: dict[str, Any]) -> dict[str, int] | None:
   result: dict[str, int] = {}
   for key in (
@@ -303,6 +341,13 @@ def transform_antigravity_response(
     # Hermes Cloud Code runtime parses native streams; this utility only surfaces
     # usage metadata as headers while preserving the original SSE body.
     usage = _extract_usage_from_sse_payload(body)
+    parsed_error = _extract_error_from_sse_payload(body)
+    if parsed_error is not None:
+      _, recovery_headers, error = _handle_error_response(
+        parsed_error, body, status_code, resolved_headers,
+        requested_model, effective_model, project_id, endpoint, debug_text,
+      )
+      return (body, _build_usage_headers(usage, recovery_headers), error)
     return (body, _build_usage_headers(usage, extra_headers_dict), None)
 
   parsed = _parse_antigravity_api_body(body)
@@ -359,6 +404,7 @@ def _handle_error_response(
   raw_message = error_info.get("message", "")
   if not isinstance(raw_message, str) or not raw_message:
     raw_message = "Unknown error"
+  safe_message = redact_secret_text(raw_message)
 
   request_id = headers.get("x-request-id", headers.get("X-Request-Id", "N/A"))
 
@@ -372,8 +418,8 @@ def _handle_error_response(
     f"Request ID: {request_id}"
   )
 
-  injected_debug = f"\n\n{debug_text}" if debug_text else ""
-  error_body["error"]["message"] = raw_message + debug_info + injected_debug
+  injected_debug = f"\n\n{redact_secret_text(debug_text)}" if debug_text else ""
+  error_body["error"]["message"] = safe_message + debug_info + injected_debug
 
   extra_headers: dict[str, str] = {}
   msg_lower = raw_message.lower()
@@ -413,6 +459,13 @@ def _handle_error_response(
       json.dumps(error_body),
       extra_headers or None,
       {"recoveryType": "tool_result_missing"},
+    )
+
+  if recovery_type == "thinking_disabled_violation":
+    return (
+      json.dumps(error_body),
+      extra_headers or None,
+      {"recoveryType": "thinking_disabled_violation"},
     )
 
   retry_info = extract_retry_info(parsed)

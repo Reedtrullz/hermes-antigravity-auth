@@ -233,6 +233,17 @@ class TestOAuth(unittest.TestCase):
         self.assertNotIn("refresh_secret", result["error"])
         self.assertIn("[REDACTED]", result["error"])
 
+    def test_exchange_antigravity_generic_exception_redacts_secret_text(self):
+        with patch(
+            "antigravity_auth.oauth.require_credentials",
+            side_effect=RuntimeError("clientSecret=generic-secret"),
+        ):
+            result = exchange_antigravity("fake_code", "fake_state")
+
+        self.assertEqual(result["type"], "failed")
+        self.assertNotIn("generic-secret", result["error"])
+        self.assertIn("[REDACTED]", result["error"])
+
     @patch('antigravity_auth.oauth.make_post_request')
     def test_exchange_antigravity_missing_access_token(self, mock_make_post):
         # Populate the PKCE verifier store

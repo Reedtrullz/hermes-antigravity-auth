@@ -21,6 +21,7 @@ from .transform.envelope import (
     build_antigravity_headers,
     resolve_model_for_header_style,
 )
+from .transform.schema import clean_json_schema
 
 logger = logging.getLogger(__name__)
 
@@ -463,32 +464,47 @@ def _persist_managed_account_state(
       stored_account["fingerprintHistory"] = getattr(account, "fingerprint_history")
     try:
       rl_dict = account.rate_limit_reset_times.to_dict()
-      if rl_dict:
-        stored_account["rateLimitResetTimes"] = rl_dict
-      else:
-        stored_account.pop("rateLimitResetTimes", None)
+      stored_rl = stored_account.get("rateLimitResetTimes")
+      merged_rl = dict(stored_rl) if isinstance(stored_rl, dict) else {}
+      for key, value in rl_dict.items():
+        candidate = _coerce_expires_ms(value)
+        existing = _coerce_expires_ms(merged_rl.get(key))
+        if candidate is not None and (existing is None or candidate > existing):
+          merged_rl[key] = value
+      if merged_rl:
+        stored_account["rateLimitResetTimes"] = merged_rl
     except Exception:
       pass
     try:
       failures = getattr(account, "consecutive_failures", 0)
-      if isinstance(failures, (int, float)) and not isinstance(failures, bool) and int(failures) > 0:
-        stored_account["consecutiveFailures"] = int(failures)
-      else:
-        stored_account.pop("consecutiveFailures", None)
       failure_time = _coerce_expires_ms(getattr(account, "last_failure_time", None))
+      stored_failure_time = _coerce_expires_ms(stored_account.get("lastFailureTime"))
       if failure_time is not None:
-        stored_account["lastFailureTime"] = failure_time
+        if stored_failure_time is None or failure_time >= stored_failure_time:
+          stored_account["lastFailureTime"] = failure_time
+          if isinstance(failures, (int, float)) and not isinstance(failures, bool) and int(failures) > 0:
+            stored_account["consecutiveFailures"] = int(failures)
       else:
-        stored_account.pop("lastFailureTime", None)
+        cleared_at = _coerce_expires_ms(getattr(account, "_failure_state_cleared_at", None))
+        if (
+          cleared_at is not None
+          and isinstance(failures, (int, float))
+          and not isinstance(failures, bool)
+          and int(failures) == 0
+          and (stored_failure_time is None or stored_failure_time <= cleared_at)
+        ):
+          stored_account["consecutiveFailures"] = 0
+          stored_account["lastFailureTime"] = None
     except Exception:
       pass
     cooldown_until = getattr(account, "cooling_down_until", None)
-    if cooldown_until is not None:
+    stored_cooldown_until = _coerce_expires_ms(stored_account.get("coolingDownUntil"))
+    account_cooldown_until = _coerce_expires_ms(cooldown_until)
+    if account_cooldown_until is not None and (
+      stored_cooldown_until is None or account_cooldown_until >= stored_cooldown_until
+    ):
       stored_account["coolingDownUntil"] = cooldown_until
       stored_account["cooldownReason"] = getattr(account, "cooldown_reason", None)
-    else:
-      stored_account.pop("coolingDownUntil", None)
-      stored_account.pop("cooldownReason", None)
 
     if set_family_active and family in ("claude", "gemini"):
       family_map = storage.get("activeIndexByFamily")
@@ -749,6 +765,10 @@ def _apply_claude_transforms(inner_request: dict) -> None:
         params = fd.get("parameters")
         if not isinstance(params, dict):
           continue
+        params = clean_json_schema(params)
+        if not isinstance(params, dict):
+          continue
+        fd["parameters"] = params
         required = params.get("required")
         if not isinstance(required, list) or len(required) == 0:
           props = params.get("properties")
@@ -897,6 +917,21 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
     header_style = request_extensions.get(
         "antigravity_header_style"
     ) or _select_header_style_for_model(model, config.cli_first)
+
+    if 200 <= response.status_code < 400:
+        try:
+            from .accounts.manager import get_or_create_global_manager
+            mgr = get_or_create_global_manager()
+            active = _response_account_for_request(mgr, request_extensions, family)
+            if active and getattr(active, "consecutive_failures", 0):
+                mgr.mark_request_success(active)
+                if not _persist_managed_account_state(active, family=family):
+                    try:
+                        mgr.save_to_disk()
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug("Success recovery handler error: %s", e)
 
     if response.status_code == 401 and config.proactive_token_refresh:
         try:

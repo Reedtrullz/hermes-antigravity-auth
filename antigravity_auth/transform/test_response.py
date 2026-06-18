@@ -467,6 +467,45 @@ class TestTransformAntigravityResponse(unittest.TestCase):
         self.assertIsNotNone(extra_headers)
         self.assertEqual(extra_headers["x-antigravity-context-error"], "tool_pairing")
 
+    def test_thinking_disabled_violation_uses_shared_recovery_detection(self):
+        """Marks stale thinking blocks as recoverable when thinking is disabled."""
+        error_body = json.dumps({
+            "error": {
+                "message": "Thinking is disabled but messages.1 cannot contain thinking blocks"
+            }
+        })
+        body, extra_headers, error = transform_antigravity_response(
+            error_body,
+            streaming=False,
+            status_code=400,
+            headers={"content-type": "application/json"},
+        )
+
+        self.assertIsNotNone(error)
+        self.assertEqual(error["recoveryType"], "thinking_disabled_violation")
+
+    def test_error_response_redacts_message_and_debug_text(self):
+        """Redacts secret-shaped provider and debug error text."""
+        error_body = json.dumps({
+            "error": {
+                "message": "client_secret=response-secret refreshToken=response-refresh"
+            }
+        })
+        body, extra_headers, error = transform_antigravity_response(
+            error_body,
+            streaming=False,
+            status_code=400,
+            headers={"content-type": "application/json"},
+            debug_text="accessToken=debug-access",
+        )
+
+        parsed = json.loads(body)
+        rendered = parsed["error"]["message"]
+        self.assertNotIn("response-secret", rendered)
+        self.assertNotIn("response-refresh", rendered)
+        self.assertNotIn("debug-access", rendered)
+        self.assertIn("[REDACTED]", rendered)
+
     def test_sse_body_passthrough(self):
         """Returns SSE body unchanged for streaming responses."""
         sse_body = 'data: {"response": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}}\n\n'
@@ -526,6 +565,58 @@ class TestTransformAntigravityResponse(unittest.TestCase):
         self.assertIsNone(error)
         assert extra_headers is not None
         self.assertEqual(extra_headers["x-antigravity-total-token-count"], "44")
+
+    def test_sse_error_preserves_body_and_surfaces_tool_pairing_recovery(self):
+        """Classifies SSE error frames while preserving the native stream body."""
+        sse_body = (
+            'data: {"error": {"message": "messages.2: tool_use id call_1 has no matching tool_result"}}\n\n'
+        )
+        body, extra_headers, error = transform_antigravity_response(
+            sse_body,
+            streaming=True,
+            status_code=400,
+            headers={"content-type": "text/event-stream"},
+        )
+
+        self.assertEqual(body, sse_body)
+        self.assertIsNotNone(error)
+        self.assertEqual(error["recoveryType"], "tool_result_missing")
+        self.assertIsNotNone(extra_headers)
+        self.assertEqual(extra_headers["x-antigravity-context-error"], "tool_pairing")
+
+    def test_sse_status_200_error_preserves_body_and_surfaces_recovery(self):
+        """Classifies in-band SSE error frames even when HTTP status is 200."""
+        sse_body = (
+            'data: {"error": {"message": "messages.2: tool_use id call_1 has no matching tool_result"}}\n\n'
+        )
+        body, extra_headers, error = transform_antigravity_response(
+            sse_body,
+            streaming=True,
+            status_code=200,
+            headers={"content-type": "text/event-stream"},
+        )
+
+        self.assertEqual(body, sse_body)
+        self.assertIsNotNone(error)
+        self.assertEqual(error["recoveryType"], "tool_result_missing")
+        self.assertIsNotNone(extra_headers)
+        self.assertEqual(extra_headers["x-antigravity-context-error"], "tool_pairing")
+
+    def test_sse_error_preserves_body_and_surfaces_thinking_order_recovery(self):
+        """Classifies SSE thinking-order errors while preserving the stream body."""
+        sse_body = (
+            'data: {"error": {"message": "expected thinking block first, found text"}}\n\n'
+        )
+        body, extra_headers, error = transform_antigravity_response(
+            sse_body,
+            streaming=True,
+            status_code=400,
+            headers={"content-type": "text/event-stream"},
+        )
+
+        self.assertEqual(body, sse_body)
+        self.assertIsNotNone(error)
+        self.assertEqual(error["recoveryType"], "thinking_block_order")
 
     def test_successful_response_transformed(self):
         """Transforms successful JSON response with thinking parts."""

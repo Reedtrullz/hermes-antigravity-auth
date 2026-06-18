@@ -1,6 +1,7 @@
 import os
 import json
 import tempfile
+import urllib.error
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -207,6 +208,65 @@ class TestProbeAccountHealth(unittest.TestCase):
         self.assertEqual(body["request"]["model"], "gemini-3.5-flash-low")
         self.assertEqual(req.headers["X-goog-user-project"], "managed-project")
 
+    @patch("antigravity_auth.verification.urllib.request.urlopen")
+    def test_verify_account_access_redacts_error_message(self, mock_urlopen):
+        from antigravity_auth.verification import verify_account_access
+
+        class ErrorBody:
+            def read(self):
+                return b'{"error":{"message":"client_secret=verify-secret refresh_token=verify-refresh"}}'
+
+            def close(self):
+                pass
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "https://example.invalid",
+            500,
+            "Internal Server Error",
+            {},
+            ErrorBody(),
+        )
+
+        result = verify_account_access(
+            {"email": "user@example.com"},
+            "access-token",
+            project_id="managed-project",
+        )
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("verify-secret", result.message)
+        self.assertNotIn("verify-refresh", result.message)
+        self.assertIn("[REDACTED]", result.message)
+
+    @patch("antigravity_auth.verification.urllib.request.urlopen")
+    def test_verify_account_access_redacts_validation_required_message(self, mock_urlopen):
+        from antigravity_auth.verification import verify_account_access
+
+        class ErrorBody:
+            def read(self):
+                return b'{"error":{"message":"validation_required clientSecret=blocked-secret"}}'
+
+            def close(self):
+                pass
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            "https://example.invalid",
+            403,
+            "Forbidden",
+            {},
+            ErrorBody(),
+        )
+
+        result = verify_account_access(
+            {"email": "user@example.com"},
+            "access-token",
+            project_id="managed-project",
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertNotIn("blocked-secret", result.message)
+        self.assertIn("[REDACTED]", result.message)
+
     def test_probe_uses_refreshed_access_without_rewriting_auth_stores(self):
         from antigravity_auth import verification
         from antigravity_auth.storage import get_active_token_from_auth_json, sync_token_to_auth_json
@@ -289,6 +349,26 @@ class TestProbeAccountHealth(unittest.TestCase):
                 result = probe_account_health(account)
 
         self.assertEqual(result.status, "ok")
+
+    def test_probe_account_health_redacts_refresh_error(self):
+        from antigravity_auth.verification import probe_account_health
+
+        account = {
+            "email": "user@example.com",
+            "refreshToken": "old-refresh",
+            "projectId": "proj-1",
+        }
+
+        with patch(
+            "antigravity_auth.verification.refresh_access_token",
+            side_effect=RuntimeError("client_secret=verify-secret refresh_token=verify-refresh"),
+        ):
+            result = probe_account_health(account)
+
+        self.assertEqual(result.status, "error")
+        self.assertNotIn("verify-secret", result.message)
+        self.assertNotIn("verify-refresh", result.message)
+        self.assertIn("[REDACTED]", result.message)
 
 
 if __name__ == "__main__":

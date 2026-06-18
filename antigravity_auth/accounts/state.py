@@ -21,6 +21,14 @@ RATE_LIMIT_REASON_SERVER_ERROR = "SERVER_ERROR"
 RATE_LIMIT_REASON_UNKNOWN = "UNKNOWN"
 
 
+def _coerce_ms(value: Any) -> float | None:
+  if isinstance(value, bool) or not isinstance(value, (int, float)):
+    return None
+  if value < 0:
+    return None
+  return float(value)
+
+
 @dataclass
 class RateLimitState:
   """Per-quota-key rate limit reset times (epoch ms)."""
@@ -84,14 +92,16 @@ class RateLimitState:
   @classmethod
   def from_dict(cls, data: dict[str, float] | None) -> RateLimitState:
     state = cls()
-    if not data:
+    if not isinstance(data, dict):
       return state
-    state.claude = data.get("claude")
-    state.gemini_antigravity = data.get("gemini-antigravity")
-    state.gemini_cli = data.get("gemini-cli")
+    state.claude = _coerce_ms(data.get("claude"))
+    state.gemini_antigravity = _coerce_ms(data.get("gemini-antigravity"))
+    state.gemini_cli = _coerce_ms(data.get("gemini-cli"))
     for k, v in data.items():
       if k not in ("claude", "gemini-antigravity", "gemini-cli"):
-        state.extras[k] = v
+        coerced = _coerce_ms(v)
+        if coerced is not None:
+          state.extras[k] = coerced
     return state
 
 

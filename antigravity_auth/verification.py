@@ -10,10 +10,12 @@ from urllib.parse import urlparse
 
 try:
     from .constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
+    from .redaction import redact_secret_text
     from .token import format_refresh_parts, parse_refresh_parts, refresh_access_token
     from .storage import sync_token_to_auth_json
 except ImportError:
     from constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
+    from redaction import redact_secret_text
     from token import format_refresh_parts, parse_refresh_parts, refresh_access_token
     from storage import sync_token_to_auth_json
 
@@ -244,17 +246,21 @@ def verify_account_access(
         if e.code == 403 and extracted.get("validationRequired"):
             return VerificationProbeResult(
                 status="blocked",
-                message=extracted.get("message") or "Google requires additional account verification.",
+                message=redact_secret_text(
+                    extracted.get("message") or "Google requires additional account verification."
+                ),
                 verify_url=extracted.get("verifyUrl"),
             )
 
-        fallback_message = extracted.get("message") or f"Request failed ({e.code} {e.reason})."
+        fallback_message = redact_secret_text(
+            extracted.get("message") or f"Request failed ({e.code} {e.reason})."
+        )
         return VerificationProbeResult(
             status="error",
             message=fallback_message,
         )
     except urllib.error.URLError as e:
-        error_str = str(e)
+        error_str = redact_secret_text(str(e))
         if "timed out" in error_str.lower():
             return VerificationProbeResult(
                 status="error",
@@ -267,7 +273,7 @@ def verify_account_access(
     except Exception as e:
         return VerificationProbeResult(
             status="error",
-            message=f"Verification check failed: {e}",
+            message=f"Verification check failed: {redact_secret_text(str(e))}",
         )
 
 
@@ -307,7 +313,7 @@ def probe_account_health(account: dict) -> VerificationProbeResult:
     except Exception as e:
         return VerificationProbeResult(
             status="error",
-            message=f"Token refresh failed: {e}",
+            message=f"Token refresh failed: {redact_secret_text(str(e))}",
         )
 
     access_token = refreshed.get("access") if isinstance(refreshed, dict) else None

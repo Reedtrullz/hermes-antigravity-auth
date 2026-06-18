@@ -36,16 +36,16 @@ _EXACT_SECRET_KEYS = {
 
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _QUERY_SECRET_RE = re.compile(
-  r"(?i)([?&](?:access_token|refresh_token|id_token|client_secret|code|code_verifier|api_key|apikey|key)=)[^&#\s]+"
+  r"(?i)([?&](?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code|code_verifier|codeVerifier|session_token|sessionToken|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key)=)[^&#\s]+"
 )
 _JSON_SECRET_RE = re.compile(
-  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)"\s*:\s*")[^"]*(")'
+  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)"\s*:\s*")[^"]*(")'
 )
 _PYTHON_REPR_SECRET_RE = re.compile(
-  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)'\s*:\s*')[^']*(')"
+  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)'\s*:\s*')[^']*(')"
 )
 _FORM_SECRET_RE = re.compile(
-  r"(?i)\b(access_token|refresh_token|id_token|client_secret|code_verifier|code|api_key|apikey|key)=([^&\s]+)"
+  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key)=([^&\s]+)"
 )
 _HEADER_SECRET_RE = re.compile(
   r"(?im)^(\s*(?:authorization|x-api-key|x-goog-api-key|api-key)\s*:\s*)[^\r\n]+"

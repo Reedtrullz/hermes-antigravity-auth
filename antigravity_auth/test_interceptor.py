@@ -737,6 +737,57 @@ class TestRequestHook(unittest.TestCase):
         self.assertEqual(stored["lastUsed"], 1234)
         self.assertEqual(account.refresh_parts.refresh_token, "new-refresh")
 
+    def test_persist_managed_state_preserves_newer_protective_state(self):
+        from antigravity_auth.accounts.manager import AccountManager
+        from antigravity_auth.interceptor import _persist_managed_account_state
+        from antigravity_auth.storage import load_accounts, save_accounts, update_accounts
+
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "limited-race@example.com",
+                "refreshToken": "refresh",
+                "projectId": "project",
+            }],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+        manager = AccountManager.load_from_disk()
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+        account.rate_limit_reset_times.set("gemini-antigravity", 1000)
+        account.consecutive_failures = 1
+        account.last_failure_time = 1000
+        account.cooling_down_until = 1000
+        account.cooldown_reason = "network-error"
+
+        def update_newer_state(data):
+            data["accounts"][0].update({
+                "rateLimitResetTimes": {
+                    "gemini-antigravity": 999999,
+                    "gemini-cli": 888888,
+                },
+                "consecutiveFailures": 3,
+                "lastFailureTime": 999999,
+                "coolingDownUntil": 777777,
+                "cooldownReason": "auth-failure",
+            })
+
+        update_accounts(update_newer_state)
+        self.assertTrue(_persist_managed_account_state(account, family="gemini"))
+
+        stored = load_accounts()["accounts"][0]
+        self.assertEqual(stored["rateLimitResetTimes"], {
+            "gemini-antigravity": 999999,
+            "gemini-cli": 888888,
+        })
+        self.assertEqual(stored["consecutiveFailures"], 3)
+        self.assertEqual(stored["lastFailureTime"], 999999)
+        self.assertEqual(stored["coolingDownUntil"], 777777)
+        self.assertEqual(stored["cooldownReason"], "auth-failure")
+
     def test_persist_managed_state_writes_rate_limit_failure_state(self):
         from antigravity_auth.accounts.manager import AccountManager
         from antigravity_auth.interceptor import _persist_managed_account_state
@@ -1541,6 +1592,74 @@ class TestResponseHook(unittest.TestCase):
         self.assertIsNone(mgr.account.cooldown_reason)
         self.assertFalse(mgr.saved)
         self.assertFalse(mgr.rotation_requested)
+
+    def test_success_response_clears_selected_account_failure_state(self):
+        from antigravity_auth.interceptor import _antigravity_response_hook
+
+        class FakeRefreshParts:
+            refresh_token = "active-refresh"
+            project_id = "active-project"
+            managed_project_id = ""
+
+        class FakeAccount:
+            index = 0
+            email = "active@example.com"
+            refresh_parts = FakeRefreshParts()
+
+            def __init__(self):
+                self.consecutive_failures = 2
+                self.last_failure_time = 123456
+                self.rate_limit_reset_times = type("RateLimits", (), {
+                    "to_dict": lambda self: {},
+                })()
+
+        class FakeManager:
+            def __init__(self):
+                self.account = FakeAccount()
+                self.success_recorded = False
+                self.saved = False
+
+            def get_account_by_index(self, index):
+                return self.account if index == 0 else None
+
+            def get_current_account_for_family(self, family):
+                return self.account
+
+            def mark_request_success(self, account):
+                self.success_recorded = True
+                account.consecutive_failures = 0
+                account.last_failure_time = None
+                account._failure_state_cleared_at = 200000
+
+            def save_to_disk(self):
+                self.saved = True
+                return True
+
+        config = type("Config", (), {
+            "proactive_token_refresh": False,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": False,
+        })()
+        mgr = FakeManager()
+        response = self._make_response(model="gemini-3.1-pro-high", status=200)
+        response.request.extensions["antigravity_selected_account_index"] = 0
+        response.request.extensions["antigravity_selected_account_identity"] = {
+            "email": "active@example.com",
+            "refresh_token": "active-refresh",
+            "project_id": "active-project",
+            "managed_project_id": "",
+        }
+
+        with patch("antigravity_auth.config.get_config", return_value=config), patch(
+            "antigravity_auth.accounts.manager.get_or_create_global_manager",
+            return_value=mgr,
+        ):
+            _antigravity_response_hook(response)
+
+        self.assertTrue(mgr.success_recorded)
+        self.assertEqual(mgr.account.consecutive_failures, 0)
+        self.assertIsNone(mgr.account.last_failure_time)
 
     def test_401_does_not_refresh_reindexed_account_when_identity_mismatches(self):
         from antigravity_auth.interceptor import _antigravity_response_hook
@@ -2406,3 +2525,51 @@ class TestResponseHook(unittest.TestCase):
         output = "\n".join(logs.output)
         self.assertIn("could not sync auth.json", output)
         self.assertNotIn("Proactively refreshed token", output)
+
+    def test_token_watchdog_redacts_refresh_exception(self):
+        from antigravity_auth.storage import save_accounts
+        from antigravity_auth.token_watchdog import _refresh_if_needed
+
+        save_accounts({
+            "version": 4,
+            "accounts": [{
+                "email": "active@example.com",
+                "refreshToken": "active-refresh",
+                "projectId": "proj-active",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        })
+
+        fake_agent = types.ModuleType("agent")
+        fake_google_oauth = types.ModuleType("agent.google_oauth")
+        setattr(fake_google_oauth, "load_credentials", lambda: type("Creds", (), {
+            "refresh_token": "stored-refresh",
+            "expires_ms": 0,
+        })())
+        original_agent = sys.modules.get("agent")
+        original_google_oauth = sys.modules.get("agent.google_oauth")
+        sys.modules["agent"] = fake_agent
+        sys.modules["agent.google_oauth"] = fake_google_oauth
+        config = type("Config", (), {"proactive_refresh_buffer_seconds": 1800})()
+
+        try:
+            with patch(
+                "antigravity_auth.token.refresh_access_token",
+                side_effect=RuntimeError("client_secret=watch-secret refresh_token=watch-refresh"),
+            ), self.assertLogs("antigravity_auth.token_watchdog", level="DEBUG") as logs:
+                _refresh_if_needed(config)
+        finally:
+            if original_agent is None:
+                sys.modules.pop("agent", None)
+            else:
+                sys.modules["agent"] = original_agent
+            if original_google_oauth is None:
+                sys.modules.pop("agent.google_oauth", None)
+            else:
+                sys.modules["agent.google_oauth"] = original_google_oauth
+
+        output = "\n".join(logs.output)
+        self.assertNotIn("watch-secret", output)
+        self.assertNotIn("watch-refresh", output)
+        self.assertIn("[REDACTED]", output)

@@ -154,6 +154,60 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         self.assertEqual(account.consecutive_failures, 0)
         self.assertIsNone(account.last_failure_time)
 
+        with mock.patch(
+            "antigravity_auth.storage.get_accounts_json_path",
+            return_value=self.accounts_path,
+        ):
+            self.assertTrue(manager.save_to_disk())
+
+        with open(self.accounts_path, "r", encoding="utf-8") as f:
+            stored = json.load(f)["accounts"][0]
+        self.assertEqual(stored["consecutiveFailures"], 0)
+        self.assertIsNone(stored["lastFailureTime"])
+
+    def test_duplicate_rate_limit_does_not_escalate_failure_count(self) -> None:
+        from antigravity_auth.accounts.state import RATE_LIMIT_REASON_QUOTA_EXHAUSTED
+
+        data = {
+            "version": 4,
+            "accounts": [{
+                "email": "dedup@example.com",
+                "refreshToken": "refresh-dedup",
+                "projectId": "proj-dedup",
+            }],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+
+        first = manager.mark_rate_limited_with_reason(
+            account,
+            "gemini",
+            "antigravity",
+            None,
+            RATE_LIMIT_REASON_QUOTA_EXHAUSTED,
+            retry_after_ms=60_000,
+        )
+        first_reset = account.rate_limit_reset_times.get("gemini-antigravity")
+        second = manager.mark_rate_limited_with_reason(
+            account,
+            "gemini",
+            "antigravity",
+            None,
+            RATE_LIMIT_REASON_QUOTA_EXHAUSTED,
+            retry_after_ms=300_000,
+        )
+
+        self.assertEqual(account.consecutive_failures, 1)
+        self.assertIsNotNone(first_reset)
+        self.assertGreater(account.rate_limit_reset_times.get("gemini-antigravity") or 0, first_reset or 0)
+        self.assertGreater(first, 0)
+        self.assertGreater(second, first)
+
     def test_snapshot_redacts_refresh_and_access_tokens(self) -> None:
         data = {
             "version": 4,
@@ -231,6 +285,40 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         self.assertEqual(stored["lastRefreshAt"], 999)
         self.assertEqual(stored["fingerprint"], {"deviceId": "new-device", "createdAt": 999})
         self.assertEqual(stored["rateLimitResetTimes"], {"claude": 8888})
+
+    def test_load_drops_malformed_timing_fields(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [{
+                "email": "timing@example.com",
+                "refreshToken": "refresh-timing",
+                "projectId": "proj-timing",
+                "rateLimitResetTimes": {
+                    "gemini-antigravity": "not-a-number",
+                    "gemini-cli": 999999,
+                },
+                "coolingDownUntil": "not-a-number",
+                "cachedQuota": {"gemini-pro": {"remainingFraction": 0.1}},
+                "cachedQuotaUpdatedAt": "not-a-number",
+            }],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+        self.assertIsNone(account.rate_limit_reset_times.get("gemini-antigravity"))
+        self.assertEqual(account.rate_limit_reset_times.get("gemini-cli"), 999999)
+        self.assertIsNone(account.cooling_down_until)
+        self.assertIsNone(account.cached_quota_updated_at)
+        selected = manager.get_current_or_next_for_family(
+            "gemini",
+            model="gemini-3-pro-preview",
+            soft_quota_threshold_percent=90,
+        )
+        self.assertIsNotNone(selected)
 
     def test_reload_from_disk_mutates_existing_manager_and_cancels_pending_save(self) -> None:
         data = {
@@ -700,6 +788,53 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         self.assertEqual(len(remaining), 1)
         self.assertEqual(remaining[0].index, 0)
         self.assertEqual(remaining[0].email, "bob@example.com")
+
+    def test_remove_account_clears_index_keyed_trackers(self) -> None:
+        from antigravity_auth.accounts.state import RATE_LIMIT_REASON_QUOTA_EXHAUSTED
+
+        data = {
+            "version": 4,
+            "accounts": [
+                {
+                    "email": "alice@example.com",
+                    "refreshToken": "refresh-alice",
+                    "projectId": "proj-a",
+                },
+                {
+                    "email": "bob@example.com",
+                    "refreshToken": "refresh-bob",
+                    "projectId": "proj-b",
+                },
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        account = manager.get_account_by_index(0)
+        self.assertIsNotNone(account)
+        assert account is not None
+        manager.mark_rate_limited_with_reason(
+            account,
+            "gemini",
+            "antigravity",
+            None,
+            RATE_LIMIT_REASON_QUOTA_EXHAUSTED,
+        )
+        self.assertLess(manager.health_tracker.get_score(0), 70)
+
+        with mock.patch(
+            "antigravity_auth.storage.get_accounts_json_path",
+            return_value=self.accounts_path,
+        ):
+            manager.remove_account(0)
+            if manager._save_timer is not None:
+                manager._save_timer.cancel()
+                manager._save_timer = None
+                manager._save_pending = False
+
+        self.assertEqual(manager.get_accounts()[0].email, "bob@example.com")
+        self.assertEqual(manager.health_tracker.get_score(0), 70)
 
     def test_remove_last_account_persists_empty_accounts(self) -> None:
         data = {

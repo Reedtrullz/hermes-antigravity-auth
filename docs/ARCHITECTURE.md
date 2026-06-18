@@ -221,7 +221,7 @@ Key behavior:
 - Header-style aware rate-limit tracking for Gemini quota pools
 - Health-score based selection and recovery
 - Optional PID offset for parallel Hermes sessions
-- Cached quota state can be honored by soft quota thresholds when present; live quota polling does not currently populate that cache automatically
+- Cached quota state can be honored by soft quota thresholds when present; `check`/`quota` persist normalized quota buckets when the API returns bucket data
 
 ---
 
@@ -235,7 +235,7 @@ Key behavior:
 
 `antigravity_auth/accounts/quota.py` provides `fetch_quota_from_api()` which calls `v1internal:retrieveUserQuota` against production Cloud Code. The `hermes antigravity check` and `hermes antigravity quota` CLI commands use this to display live quota usage from Google's API.
 
-Soft quota selection is separate: `AccountManager` can avoid accounts whose stored `cachedQuota` data is fresh and over `soft_quota_threshold_percent`, but the current CLI quota fetch only displays quota and does not automatically write fresh `cachedQuota` back into account state.
+Soft quota selection is separate: `AccountManager` can avoid accounts whose stored `cachedQuota` data is fresh and over `soft_quota_threshold_percent`. The CLI quota fetch writes fresh normalized `cachedQuota` back into account state when the API returns bucket data; it does not run as background automatic polling.
 
 ---
 

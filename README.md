@@ -346,8 +346,10 @@ Controls how the plugin waits when accounts are rate-limited.
 ### Quota Protection
 
 When fresh cached quota data is present in account state, selection can rotate
-away from accounts that have crossed the configured soft threshold. The live
-quota CLI display does not currently populate that cache automatically.
+away from accounts that have crossed the configured soft threshold. The
+`check`/`quota` CLI commands persist normalized quota buckets when Google's API
+returns bucket data; this is still an explicit CLI refresh, not background
+automatic polling.
 
 | Option | Default | What it does |
 |--------|---------|--------------|
@@ -508,8 +510,9 @@ stream starts, so doctor warns about this limitation; retry the user request
 manually if a streaming call fails after token refresh or account rotation.
 
 **Soft quota cache**: Account selection can honor cached quota state when it is
-already present, but the live quota check command currently displays quota
-without populating that cache automatically.
+present. The live `check`/`quota` commands persist normalized quota buckets
+when the API returns bucket data; this remains an explicit CLI refresh rather
+than background polling.
 
 ---
 

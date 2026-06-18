@@ -118,6 +118,21 @@ class TestTransformMessagesToContents(unittest.TestCase):
     self.assertIsNotNone(system)
     self.assertEqual(system["parts"][0]["text"], "You are a helpful assistant.")
 
+  def test_developer_message_extracted_with_system_instruction(self):
+    messages = [
+      {"role": "system", "content": "Be accurate."},
+      {"role": "developer", "content": "Use the configured tools only."},
+      {"role": "user", "content": "Hello"},
+    ]
+    contents, system = transform_messages_to_contents(messages)
+    self.assertEqual(len(contents), 1)
+    self.assertEqual(contents[0]["role"], "user")
+    self.assertIsNotNone(system)
+    self.assertEqual(
+      system["parts"][0]["text"],
+      "Be accurate.\n\nUse the configured tools only.",
+    )
+
   def test_system_message_with_user_first(self):
     """System message should be extracted to system instruction even if it comes first."""
     messages = [

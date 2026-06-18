@@ -220,6 +220,8 @@ def _check_installed_wrapper(
   expected_name: str,
   expected_kind: str,
   init_marker: str,
+  expected_init: str,
+  expected_yaml: str,
 ) -> DoctorRow:
   install_fix = "Run hermes-antigravity-install to write Hermes file-plugin wrappers."
   if not directory.exists():
@@ -246,10 +248,15 @@ def _check_installed_wrapper(
       f"{yaml_path} has name={actual_name or '<missing>'}, kind={actual_kind or '<missing>'}",
       install_fix,
     )
+  if init_text != expected_init:
+    return _row("FAIL", label, f"{init_path} content differs from installer-generated wrapper", install_fix)
+  if yaml_text != expected_yaml:
+    return _row("FAIL", label, f"{yaml_path} content differs from installer-generated manifest", install_fix)
   return _row("PASS", label, f"{directory} wrapper is installed")
 
 
 def _check_installed_wrappers() -> list[DoctorRow]:
+  from . import install_plugins
   hermes_home = get_hermes_home()
   return [
     _check_installed_wrapper(
@@ -258,6 +265,8 @@ def _check_installed_wrappers() -> list[DoctorRow]:
       "antigravity-cli",
       "standalone",
       "load_cli_register",
+      install_plugins.CLI_INIT,
+      install_plugins.CLI_YAML,
     ),
     _check_installed_wrapper(
       "provider file plugin",
@@ -265,6 +274,8 @@ def _check_installed_wrappers() -> list[DoctorRow]:
       "antigravity",
       "model-provider",
       "load_provider_namespace",
+      install_plugins.PROVIDER_INIT,
+      install_plugins.PROVIDER_YAML,
     ),
   ]
 
@@ -279,6 +290,14 @@ def _check_account_store_locking() -> DoctorRow:
     detail or "no inter-process file locking backend is available; transactional updates are only thread-safe inside this process",
     "Run one Hermes Antigravity process at a time or use a Python/platform with fcntl.flock or msvcrt.locking support.",
   )
+
+
+def _check_hermes_home_permissions() -> DoctorRow:
+  path = get_hermes_home()
+  mode = _path_mode(path)
+  if mode is not None and mode & 0o077:
+    return _row("WARN", "Hermes home permissions", f"{path} permissions are {oct(mode)}", f"Run chmod 700 {path}.")
+  return _row("PASS", "Hermes home permissions", f"permissions {oct(mode) if mode is not None else 'unknown'}")
 
 
 def _check_account_store() -> list[DoctorRow]:
@@ -372,9 +391,9 @@ def _check_config() -> list[DoctorRow]:
 def _check_oauth_client_credentials() -> DoctorRow:
   try:
     from .credentials import credential_file_path, resolve_oauth_credentials
-    client_id, client_secret = resolve_oauth_credentials()
     path = credential_file_path()
     mode = _path_mode(path) if path.exists() else None
+    client_id, client_secret = resolve_oauth_credentials()
     if mode is not None and mode & 0o077:
       return _row(
         "WARN",
@@ -450,6 +469,7 @@ def run_doctor() -> list[DoctorRow]:
   rows.extend(_check_provider_registration())
   rows.extend(_check_installed_wrappers())
   rows.append(_check_account_store_locking())
+  rows.append(_check_hermes_home_permissions())
   rows.extend(_check_account_store())
   rows.extend(_check_auth_files())
   rows.extend(_check_config())

@@ -103,15 +103,18 @@ def sync_token_to_all_auth_stores(
   except Exception:
     auth_json = False
 
-  try:
-    google_oauth = bool(sync_token_to_google_oauth(
-      access_token=access_token,
-      refresh_token=refresh_token,
-      project_id=project_id,
-      email=email,
-      expires_ms=expires_ms,
-    ))
-  except Exception:
+  if auth_json:
+    try:
+      google_oauth = bool(sync_token_to_google_oauth(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        project_id=project_id,
+        email=email,
+        expires_ms=expires_ms,
+      ))
+    except Exception:
+      google_oauth = False
+  else:
     google_oauth = False
 
   return AuthSyncResult(auth_json=auth_json, google_oauth=google_oauth)

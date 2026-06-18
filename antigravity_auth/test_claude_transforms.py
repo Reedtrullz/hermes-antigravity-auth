@@ -118,6 +118,36 @@ class TestApplyClaudeTransforms(unittest.TestCase):
     self.assertEqual(params["required"], ["path"])
     self.assertNotIn("_placeholder", params["properties"])
 
+  def test_sanitizes_tool_parameters_before_validated_mode(self):
+    req = self._make_request(tools=[{"functionDeclarations": [{
+      "name": "search",
+      "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "$defs": {"Unused": {"type": "object"}},
+        "properties": {
+          "mode": {
+            "const": "web",
+            "default": "web",
+            "minLength": 1,
+          },
+        },
+        "required": ["mode"],
+      },
+    }]}])
+
+    _apply_claude_transforms(req)
+
+    params = req["tools"][0]["functionDeclarations"][0]["parameters"]
+    rendered = str(params)
+    self.assertNotIn("additionalProperties", params)
+    self.assertNotIn("$defs", params)
+    self.assertNotIn("const", rendered)
+    self.assertNotIn("default", params["properties"]["mode"])
+    self.assertNotIn("minLength", params["properties"]["mode"])
+    self.assertEqual(params["required"], ["mode"])
+    self.assertEqual(params["properties"]["mode"]["enum"], ["web"])
+
   def test_no_tools_is_safe(self):
     req = self._make_request()
     del req["tools"]

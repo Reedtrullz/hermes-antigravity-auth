@@ -57,11 +57,15 @@ export ANTIGRAVITY_CLIENT_SECRET="your-client-secret"
 Alternatively, store the credentials in an external Hermes file outside the
 Python package tree at `~/.hermes/antigravity-credentials.json`:
 
-```json
+```bash
+mkdir -p ~/.hermes
+cat > ~/.hermes/antigravity-credentials.json <<'JSON'
 {
   "client_id": "your-client-id.apps.googleusercontent.com",
   "client_secret": "your-client-secret"
 }
+JSON
+chmod 600 ~/.hermes/antigravity-credentials.json
 ```
 
 Do not place real credentials in `antigravity_auth/_credentials.py`.
@@ -131,7 +135,7 @@ All configuration options for `config.yaml` under `plugins.entries.antigravity`:
 | `account_selection_strategy` | `string` | `"hybrid"` | Account rotation: `"sticky"`, `"hybrid"`, `"round-robin"` |
 | `pid_offset_enabled` | `bool` | `false` | Distribute parallel agent sessions across accounts |
 | `soft_quota_threshold_percent` | `int` | `90` | Skip account when quota usage exceeds this % |
-| `quota_refresh_interval_minutes` | `int` | `15` | Background quota refresh interval |
+| `quota_refresh_interval_minutes` | `int` | `15` | Interval used for soft quota cache TTL calculation |
 | `soft_quota_cache_ttl_minutes` | `string`/`int` | `"auto"` | Quota cache freshness TTL |
 | `scheduling_mode` | `string` | `"cache_first"` | Rate limit behavior: `"cache_first"`, `"balance"`, `"performance_first"` |
 | `max_cache_first_wait_seconds` | `int` | `60` | Max wait before switching accounts |

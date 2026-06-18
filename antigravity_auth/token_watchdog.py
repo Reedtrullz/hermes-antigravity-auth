@@ -35,7 +35,8 @@ def _watchdog_loop() -> None:
 
             _refresh_if_needed(config)
         except Exception as exc:
-            logger.debug("Token watchdog error: %s", exc)
+            from .redaction import redact_secret_text
+            logger.debug("Token watchdog error: %s", redact_secret_text(str(exc)))
 
         _watchdog_stop.wait(check_interval)
 
@@ -108,7 +109,8 @@ def _refresh_if_needed(config) -> None:
                     )
                 logger.debug("Proactively refreshed token for %s", acc.get("email", "unknown"))
     except Exception as exc:
-        logger.debug("Proactive token refresh failed: %s", exc)
+        from .redaction import redact_secret_text
+        logger.debug("Proactive token refresh failed: %s", redact_secret_text(str(exc)))
 
 
 def start_watchdog() -> None:

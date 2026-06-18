@@ -15,6 +15,7 @@ from .hermes_compat import (
   has_grouping_features,
   has_required_model_picker_features,
 )
+from .redaction import redact_secret_text
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,8 @@ _PROVIDERS_API_AVAILABLE = True
 
 
 def _record(status: str, check: str, detail: str, fix: str = "") -> None:
+  detail = redact_secret_text(detail)
+  fix = redact_secret_text(fix)
   item = {"status": status, "check": check, "detail": detail, "fix": fix}
   if item not in _PROVIDER_DIAGNOSTICS:
     _PROVIDER_DIAGNOSTICS.append(item)

@@ -1,4 +1,5 @@
 import json
+import urllib.error
 import unittest
 from typing import Any
 
@@ -121,6 +122,16 @@ class TestParseSearchResponse(unittest.TestCase):
         }
         result = parse_search_response(data)
         self.assertIn("Error: Model not available", result.text)
+
+    def test_in_band_error_messages_are_redacted(self):
+        data = {
+            "error": {"message": "client_secret=inline-secret refreshToken=inline-refresh"},
+            "response": {},
+        }
+        result = parse_search_response(data)
+        self.assertNotIn("inline-secret", result.text)
+        self.assertNotIn("inline-refresh", result.text)
+        self.assertIn("[REDACTED]", result.text)
 
     def test_no_message_in_error(self):
         data = {
@@ -344,6 +355,83 @@ class TestExecuteSearch(unittest.TestCase):
         self.assertIn("https://ok", prompt)
         self.assertNotIn("123", prompt)
         self.assertIn({"urlContext": {}}, payload["request"]["tools"])
+
+    def test_http_error_body_is_redacted(self):
+        from unittest.mock import patch
+
+        class ErrorBody:
+            def read(self):
+                return b'{"error":{"message":"client_secret=search-secret refresh_token=search-refresh"}}'
+
+            def close(self):
+                pass
+
+        error = urllib.error.HTTPError(
+            "https://example.invalid",
+            500,
+            "Internal Server Error",
+            {},
+            ErrorBody(),
+        )
+
+        with patch("antigravity_auth.search.urllib.request.urlopen", side_effect=error):
+            output = execute_search(
+                SearchArgs(query="check"),
+                "access-token",
+                "project-id",
+                timeout_ms=1000,
+            )
+
+        self.assertIn("## Search Error", output)
+        self.assertNotIn("search-secret", output)
+        self.assertNotIn("search-refresh", output)
+        self.assertIn("[REDACTED]", output)
+
+    def test_http_error_reason_is_redacted(self):
+        from unittest.mock import patch
+
+        class ErrorBody:
+            def read(self):
+                return b"{}"
+
+            def close(self):
+                pass
+
+        error = urllib.error.HTTPError(
+            "https://example.invalid",
+            500,
+            "clientSecret=reason-secret",
+            {},
+            ErrorBody(),
+        )
+
+        with patch("antigravity_auth.search.urllib.request.urlopen", side_effect=error):
+            output = execute_search(
+                SearchArgs(query="check"),
+                "access-token",
+                "project-id",
+                timeout_ms=1000,
+            )
+
+        self.assertNotIn("reason-secret", output)
+        self.assertIn("[REDACTED]", output)
+
+    def test_generic_search_exception_is_redacted(self):
+        from unittest.mock import patch
+
+        with patch(
+            "antigravity_auth.search.urllib.request.urlopen",
+            side_effect=RuntimeError("client_secret=search-secret"),
+        ):
+            output = execute_search(
+                SearchArgs(query="check"),
+                "access-token",
+                "project-id",
+                timeout_ms=1000,
+            )
+
+        self.assertNotIn("search-secret", output)
+        self.assertIn("[REDACTED]", output)
 
 
 class TestSearchToolRegistration(unittest.TestCase):

@@ -58,6 +58,39 @@ class TestSessionTokenRedaction(unittest.TestCase):
         self.assertEqual(redacted["sessionToken"], "[REDACTED]")
         self.assertEqual(redacted["userAgent"], "Mozilla/5.0")
 
+    def test_session_token_free_form_shapes_are_redacted(self):
+        from antigravity_auth.redaction import redact_secret_text
+
+        rendered = redact_secret_text(
+            'url=https://example.test/?sessionToken=query-secret '
+            'json={"sessionToken":"json-secret"} '
+            "repr={'session_token': 'repr-secret'} "
+            "form=session_token=form-secret"
+        )
+
+        for secret in ("query-secret", "json-secret", "repr-secret", "form-secret"):
+            self.assertNotIn(secret, rendered)
+        self.assertIn("[REDACTED]", rendered)
+
+    def test_camel_case_url_and_form_secret_names_are_redacted(self):
+        from antigravity_auth.redaction import redact_secret_text
+
+        rendered = redact_secret_text(
+            "https://example.test/?accessToken=query-access&refreshToken=query-refresh&clientSecret=query-secret "
+            "accessToken=form-access refreshToken=form-refresh clientSecret=form-secret"
+        )
+
+        for secret in (
+            "query-access",
+            "query-refresh",
+            "query-secret",
+            "form-access",
+            "form-refresh",
+            "form-secret",
+        ):
+            self.assertNotIn(secret, rendered)
+        self.assertIn("[REDACTED]", rendered)
+
 
 class TestApiKeyRedaction(unittest.TestCase):
     def test_common_api_key_shapes_are_redacted(self):
