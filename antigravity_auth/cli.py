@@ -59,6 +59,31 @@ def _print_runtime_auth_sync_warnings(sync_result, context: str) -> None:
         print("WARNING: Native google_oauth sync failed; auth.json credentials are active.")
 
 
+def _account_role_markers(accounts_data: dict, account_index: int) -> list[str]:
+    markers: list[str] = []
+    active_idx = accounts_data.get("activeIndex")
+    if type(active_idx) is int and active_idx == account_index:
+        markers.append("GLOBAL")
+    family_map = accounts_data.get("activeIndexByFamily")
+    if isinstance(family_map, dict):
+        if family_map.get("claude") == account_index:
+            markers.append("CLAUDE")
+        if family_map.get("gemini") == account_index:
+            markers.append("GEMINI")
+    return markers
+
+
+def _format_active_index_summary(accounts_data: dict) -> str:
+    family_map = accounts_data.get("activeIndexByFamily")
+    if not isinstance(family_map, dict):
+        family_map = {}
+    return (
+        f"global={accounts_data.get('activeIndex', 0)} "
+        f"claude={family_map.get('claude', 0)} "
+        f"gemini={family_map.get('gemini', 0)}"
+    )
+
+
 def _account_matches_identity(account: dict, identity: dict) -> bool:
     if not isinstance(account, dict):
         return False
@@ -421,7 +446,6 @@ def set_credentials(client_id: str = "", client_secret: str = "") -> bool:
 def list_accounts():
     accounts_data = load_accounts()
     accounts = accounts_data.get("accounts", [])
-    active_idx = accounts_data.get("activeIndex", 0)
 
     if not accounts:
         print("No Google Antigravity accounts registered yet.")
@@ -429,11 +453,13 @@ def list_accounts():
 
     print("\nGoogle Antigravity Registered Accounts:")
     print("=" * 60)
+    print(f"Active indexes: {_format_active_index_summary(accounts_data)}")
     for idx, acc in enumerate(accounts):
-        is_active = "*" if idx == active_idx else " "
+        markers = _account_role_markers(accounts_data, idx)
+        marker_text = f" ({', '.join(markers)})" if markers else ""
         email = acc.get("email", "Unknown")
         project_id = acc.get("projectId") or "<none>"
-        print(f"{is_active} [{idx}] Email: {email} | Project: {project_id}")
+        print(f"  [{idx}] Email: {email}{marker_text} | Project: {project_id}")
     print("=" * 60)
 
 
@@ -1033,11 +1059,13 @@ def print_interceptor_status():
             print("  Status:    NOT INSTALLED")
             print("  Impact:    Claude models will NOT work through Antigravity")
             print("             (requests go through Code Assist which checks eligibility)")
-        print(f"  Hook:      {'INSTALLED' if health.get('global_httpx_hook_installed') else 'NOT INSTALLED'}")
+        print(f"  Global hook: {'INSTALLED' if health.get('global_httpx_hook_installed') else 'NOT INSTALLED'}")
         if health.get("hermes17_client_factory_patch_active"):
-            print("  Factory:   INSTALLED")
+            print("  Transport: Hermes 0.17 factory INSTALLED")
         elif health.get("hermes17_client_factory_available"):
-            print("  Factory:   AVAILABLE (not installed in this process)")
+            print("  Transport: Hermes 0.17 factory AVAILABLE (not installed in this process)")
+        elif health.get("adapter_ready"):
+            print("  Transport: legacy Cloud Code adapter")
         print(f"  Routing:   {str(health.get('status', 'unknown')).upper()} - {health.get('detail', '')}")
     except Exception as exc:
         print(f"  Status:    ERROR importing interceptor: {exc}")
@@ -1101,10 +1129,11 @@ def print_interceptor_status():
         from .storage import load_accounts
         data = load_accounts()
         accounts = data.get("accounts", [])
-        active_idx = data.get("activeIndex", 0)
         print(f"  Accounts:  {len(accounts)} configured")
+        print(f"  Active:    {_format_active_index_summary(data)}")
         for i, a in enumerate(accounts):
-            marker = " ← ACTIVE" if i == active_idx else ""
+            markers = _account_role_markers(data, i)
+            marker = f" ({', '.join(markers)})" if markers else ""
             email = a.get("email", "unknown")
             has_refresh = bool(a.get("refreshToken"))
             has_access = bool(a.get("accessToken"))

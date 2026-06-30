@@ -519,7 +519,7 @@ class TestTransformAntigravityResponse(unittest.TestCase):
     def test_sse_with_usage_extraction(self):
         """Extracts usage headers from SSE body."""
         sse_body = (
-            'data: {"response": {"usageMetadata": {"totalTokenCount": 42}}}\n\n'
+            'data: {"response": {"usageMetadata": {"totalTokenCount": 42, "thoughtsTokenCount": 7}}}\n\n'
         )
         body, extra_headers, error = transform_antigravity_response(
             sse_body, streaming=True,
@@ -529,6 +529,24 @@ class TestTransformAntigravityResponse(unittest.TestCase):
         self.assertIsNotNone(extra_headers)
         self.assertIn("x-antigravity-total-token-count", extra_headers)
         self.assertEqual(extra_headers["x-antigravity-total-token-count"], "42")
+        self.assertEqual(extra_headers["x-antigravity-thoughts-token-count"], "7")
+
+    def test_sse_with_multiple_usage_events_uses_latest_snapshot(self):
+        sse_body = (
+            'data: {"response": {"usageMetadata": {"totalTokenCount": 1, "thoughtsTokenCount": 2}}}\n\n'
+            'data: {"response": {"usageMetadata": {"totalTokenCount": 9, "thoughtsTokenCount": 4}}}\n\n'
+        )
+        body, extra_headers, error = transform_antigravity_response(
+            sse_body,
+            streaming=True,
+            headers={"content-type": "text/event-stream"},
+        )
+
+        self.assertEqual(body, sse_body)
+        self.assertIsNone(error)
+        self.assertIsNotNone(extra_headers)
+        self.assertEqual(extra_headers["x-antigravity-total-token-count"], "9")
+        self.assertEqual(extra_headers["x-antigravity-thoughts-token-count"], "4")
 
     def test_sse_passthrough_is_documented_contract(self):
         body = 'data: {"response":{"usageMetadata":{"totalTokenCount":1}}}\n\n'
@@ -593,12 +611,16 @@ class TestTransformAntigravityResponse(unittest.TestCase):
             sse_body,
             streaming=True,
             status_code=200,
-            headers={"content-type": "text/event-stream"},
+            headers={"content-type": "text/event-stream", "x-request-id": "req-123"},
         )
 
         self.assertEqual(body, sse_body)
         self.assertIsNotNone(error)
         self.assertEqual(error["recoveryType"], "tool_result_missing")
+        self.assertTrue(error["streaming"])
+        self.assertEqual(error["statusCode"], 200)
+        self.assertEqual(error["messageIndex"], 2)
+        self.assertEqual(error["requestId"], "req-123")
         self.assertIsNotNone(extra_headers)
         self.assertEqual(extra_headers["x-antigravity-context-error"], "tool_pairing")
 

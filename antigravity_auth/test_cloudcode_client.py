@@ -264,6 +264,45 @@ class TestAntigravityCloudCodeClient(unittest.TestCase):
 
         self.assertEqual(chunks[0].choices[0].delta.content, "hello")
 
+  def test_streaming_sse_error_includes_recovery_metadata(self):
+    def handler(request: httpx.Request) -> httpx.Response:
+      request.read()
+      payload = {
+        "error": {
+          "message": "messages.2: tool_use id call_1 has no matching tool_result"
+        }
+      }
+      return httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        content=f"data: {json.dumps(payload)}\n\n",
+        request=request,
+      )
+
+    client = AntigravityCloudCodeClient(
+      http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+    with patch(
+      "antigravity_auth.cloudcode_client.get_config",
+      return_value=SimpleNamespace(cli_first=False),
+    ), patch(
+      "antigravity_auth.cloudcode_client._select_request_account",
+      return_value=_selected_account(),
+    ):
+      with self.assertRaises(AntigravityCloudCodeError) as caught:
+        list(client.chat.completions.create(
+          model="gemini-3.5-flash-low",
+          messages=[{"role": "user", "content": "hello"}],
+          stream=True,
+        ))
+
+    self.assertEqual(caught.exception.code, "antigravity_stream_event_error")
+    self.assertEqual(caught.exception.details["recoveryType"], "tool_result_missing")
+    self.assertEqual(caught.exception.details["messageIndex"], 2)
+    self.assertEqual(caught.exception.details["statusCode"], 200)
+    self.assertTrue(caught.exception.details["streaming"])
+
   def test_non_stream_retries_once_after_response_hook_marks_ready(self):
     for status in (401, 403, 429):
       with self.subTest(status=status):

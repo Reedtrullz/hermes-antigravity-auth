@@ -12,19 +12,17 @@ from typing import Any
 try:
   from .constants import (
     ANTIGRAVITY_ENDPOINT_PROD,
-    ANTIGRAVITY_VERSION_FALLBACK,
     get_antigravity_headers,
-    get_platform,
   )
   from .redaction import redact_secret_text
+  from .transform.envelope import build_antigravity_envelope
 except ImportError:
   from constants import (
     ANTIGRAVITY_ENDPOINT_PROD,
-    ANTIGRAVITY_VERSION_FALLBACK,
     get_antigravity_headers,
-    get_platform,
   )
   from redaction import redact_secret_text
+  from transform.envelope import build_antigravity_envelope
 
 SEARCH_MODEL = "gemini-3.5-flash-low"
 
@@ -247,6 +245,7 @@ def execute_search(
 ) -> str:
   query = args.query
   urls = filter_search_urls(args.urls)
+  effective_project_id = project_id.strip() if isinstance(project_id, str) else ""
 
   prompt = query
   if urls:
@@ -273,24 +272,26 @@ def execute_search(
       "temperature": 0,
       "topP": 1,
     },
+    "sessionId": get_session_id(),
   }
 
-  wrapped_body = {
-    "project": project_id,
-    "model": SEARCH_MODEL,
-    "userAgent": "antigravity",
-    "requestId": generate_request_id(),
-    "request": {
-      **request_payload,
-      "sessionId": get_session_id(),
-    },
-  }
+  wrapped_body = build_antigravity_envelope(
+    request_payload=request_payload,
+    model=SEARCH_MODEL,
+    project_id=effective_project_id,
+    header_style="antigravity",
+  )
+  wrapped_body["requestId"] = generate_request_id()
+  if not effective_project_id:
+    wrapped_body.pop("project", None)
 
   url = f"{ANTIGRAVITY_ENDPOINT_PROD}/v1internal:generateContent"
 
   headers = get_antigravity_headers()
   headers["Authorization"] = f"Bearer {access_token}"
   headers["Content-Type"] = "application/json"
+  if effective_project_id:
+    headers["x-goog-user-project"] = effective_project_id
 
   try:
     data = json.dumps(wrapped_body).encode("utf-8")

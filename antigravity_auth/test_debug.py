@@ -90,6 +90,12 @@ class TestMaskHeaders(unittest.TestCase):
         result = _mask_headers(headers)
         self.assertEqual(result["authorization"], "[redacted]")
 
+    def test_cookie_headers_are_redacted(self):
+        headers = {"Cookie": "SID=session-secret", "Set-Cookie": "SID=set-secret"}
+        result = _mask_headers(headers)
+        self.assertEqual(result["Cookie"], "[REDACTED]")
+        self.assertEqual(result["Set-Cookie"], "[REDACTED]")
+
     def test_empty_dict(self):
         self.assertEqual(_mask_headers({}), {})
 

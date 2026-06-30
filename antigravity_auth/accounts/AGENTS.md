@@ -7,6 +7,7 @@ Account lifecycle, quota tracking, rate limiting, and rotation for Antigravity O
 ```
 accounts/
 ├── manager.py       # AccountManager: selection, rotation, disk persistence
+├── shared.py        # Shared singleton AccountManager accessor for runtime consistency
 ├── state.py         # ManagedAccount, RateLimitState dataclasses
 ├── quota.py         # Dual quota pool (Antigravity + Gemini CLI) tracking
 ├── ratelimit.py     # Rate limit dedup, exponential backoff, cooldowns
@@ -19,13 +20,14 @@ accounts/
 
 - **Dual quota pools**: Each account tracks 2 pools — `antigravity` and `gemini_cli` — independently
 - **PID-based isolation**: Temp file writes use `os.getpid()` to prevent multi-process collisions (storage.py pattern)
+- **Shared manager**: Runtime code should use `accounts.shared.get_or_create_global_manager()` so hooks, CLI reloads, and quota state see the same account manager
 - **Thread-safe persistence**: `_request_save_to_disk()` debounces with timer cancel on lock (not boolean flag)
 - **Health-score rotation**: `HealthScoreTracker` scores accounts by success rate, penalty on failures
 - **State is flat dicts**: No ORM/dataclass nesting — accounts stored as `dict[str, Any]` in JSON
 
 ## Anti-Patterns
 
-- **No singleton manager**: `AccountManager` is created per-use, not global — don't add global state
+- **No ad hoc managers in runtime hooks**: Use `accounts.shared`; don't create side managers that drift from the persisted/global state
 - **No blocking on quota checks**: `_is_over_quota_simple()` and `_is_over_soft_quota()` check thresholds, never sleep
 - **No nested locks**: Lock ordering is `manager._lock` → sub-component — never invert
 

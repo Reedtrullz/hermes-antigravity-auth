@@ -130,3 +130,37 @@ class TestApiKeyRedaction(unittest.TestCase):
         self.assertNotIn("refresh-secret", rendered)
         self.assertNotIn("client-secret", rendered)
         self.assertIn("[REDACTED]", rendered)
+
+    def test_inline_api_key_header_shape_is_redacted(self):
+        from antigravity_auth.redaction import redact_secret_text
+
+        rendered = redact_secret_text("request failed: X-Goog-Api-Key: inline-secret")
+
+        self.assertNotIn("inline-secret", rendered)
+        self.assertIn("X-Goog-Api-Key: [REDACTED]", rendered)
+
+
+class TestCookieRedaction(unittest.TestCase):
+    def test_cookie_headers_are_redacted_in_structured_data(self):
+        from antigravity_auth.redaction import REDACTED, redact_secrets
+
+        redacted = redact_secrets({
+            "Cookie": "SID=session-secret",
+            "Set-Cookie": "SID=set-cookie-secret",
+            "Content-Type": "application/json",
+        })
+
+        self.assertEqual(redacted["Cookie"], REDACTED)
+        self.assertEqual(redacted["Set-Cookie"], REDACTED)
+        self.assertEqual(redacted["Content-Type"], "application/json")
+
+    def test_cookie_header_shapes_are_redacted_in_text(self):
+        from antigravity_auth.redaction import redact_secret_text
+
+        rendered = redact_secret_text(
+            "Cookie: SID=session-secret\nSet-Cookie: SID=set-cookie-secret"
+        )
+
+        self.assertNotIn("session-secret", rendered)
+        self.assertNotIn("set-cookie-secret", rendered)
+        self.assertEqual(rendered.count("[REDACTED]"), 2)

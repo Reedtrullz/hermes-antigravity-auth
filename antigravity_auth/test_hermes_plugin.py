@@ -431,7 +431,8 @@ class TestHermesPluginRegister(unittest.TestCase):
 
       output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
       self.assertIn("test@example.com", output)
-      self.assertIn("ACTIVE", output)
+      self.assertIn("global=0 claude=0 gemini=0", output)
+      self.assertIn("GLOBAL, CLAUDE, GEMINI", output)
 
   def test_interceptor_status_shows_claude_models(self):
     from unittest.mock import patch

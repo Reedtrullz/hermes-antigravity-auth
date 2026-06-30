@@ -69,7 +69,7 @@ def _refresh_if_needed(config) -> None:
         accounts = accounts_data.get("accounts", [])
         if not isinstance(accounts, list) or not accounts:
             return
-        active_idx = resolve_active_account_index(accounts_data)
+        active_idx = resolve_active_account_index(accounts_data, family="gemini")
 
         if 0 <= active_idx < len(accounts):
             acc = accounts[active_idx]

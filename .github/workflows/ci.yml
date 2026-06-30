@@ -4,6 +4,9 @@ name: CI
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Test Python ${{ matrix.python-version }}
@@ -33,35 +36,64 @@ jobs:
         with:
           python-version: "3.11"
       - name: Build source archive smoke
+        id: clean-build
+        shell: bash
         run: |
-          git archive --format=tar HEAD | tar -x -C /tmp -f -
-          cd /tmp
-          python -m pip install -e '.[dev,yaml]'
+          set -euo pipefail
+
+          archive_root="$(mktemp -d "${RUNNER_TEMP}/hermes-antigravity-auth-src.XXXXXX")"
+          dist_dir="${RUNNER_TEMP}/hermes-antigravity-auth-dist"
+          rm -rf "${dist_dir}"
+          mkdir -p "${dist_dir}"
+          trap 'rm -rf "${archive_root}"' EXIT
+
+          git archive --format=tar HEAD | tar -x -C "${archive_root}" -f -
+          cd "${archive_root}"
+          python -m pip install -e '.[dev,yaml,release]'
           python -m pytest antigravity_auth/ -q
-          python -m pip install build
-          python -m build --sdist --wheel
-          python - <<'PY'
-          from pathlib import Path
+          python -m build --sdist --wheel --outdir "${dist_dir}"
+          python -m twine check "${dist_dir}"/*
+          DIST_DIR="${dist_dir}" python - <<'PY'
+          import os
+          from pathlib import Path, PurePosixPath
           import tarfile
           import zipfile
 
-          artifacts = sorted(Path("dist").iterdir())
+          dist_dir = Path(os.environ["DIST_DIR"])
+          artifacts = sorted(dist_dir.iterdir())
           if not artifacts:
-            raise SystemExit("no artifacts found in dist/")
+            raise SystemExit(f"no artifacts found in {dist_dir}")
           for artifact in artifacts:
+            if artifact.name.startswith("UNKNOWN-0.0.0"):
+              raise SystemExit(f"refusing UNKNOWN-0.0.0 artifact: {artifact}")
+            is_wheel = zipfile.is_zipfile(artifact)
             if tarfile.is_tarfile(artifact):
               with tarfile.open(artifact) as archive:
                 names = archive.getnames()
-            elif zipfile.is_zipfile(artifact):
+            elif is_wheel:
               with zipfile.ZipFile(artifact) as archive:
                 names = archive.namelist()
             else:
               raise SystemExit(f"unknown artifact type: {artifact}")
             for name in names:
-              if name.endswith("antigravity_auth/_credentials.py"):
+              parts = PurePosixPath(name).parts
+              if "antigravity_auth" not in parts:
+                continue
+              rel = PurePosixPath(*parts[parts.index("antigravity_auth"):])
+              if rel.name == "_credentials.py":
                 raise SystemExit(f"forbidden credentials module in {artifact}: {name}")
-          print("artifact contents OK")
+              if rel.parent.name == "__pycache__" and rel.name.startswith("_credentials") and rel.suffix == ".pyc":
+                raise SystemExit(f"forbidden credentials bytecode in {artifact}: {name}")
+              if is_wheel and rel.name.startswith("test_") and rel.suffix == ".py":
+                raise SystemExit(f"forbidden colocated test module in wheel {artifact}: {name}")
+          print(f"artifact contents OK: {[artifact.name for artifact in artifacts]}")
           PY
+          echo "dist_dir=${dist_dir}" >> "${GITHUB_OUTPUT}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-dist
+          path: ${{ steps.clean-build.outputs.dist_dir }}/*
+          if-no-files-found: error
 
   smoke:
     name: CLI selftest smoke

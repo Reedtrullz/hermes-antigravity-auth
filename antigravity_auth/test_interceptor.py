@@ -1302,6 +1302,7 @@ class TestRoutingHealth(unittest.TestCase):
                     {"base_url": "cloudcode-pa://google", "api_key": "ignored"},
                     reason="test",
                     shared=True,
+                    future_kwarg="ignored-by-antigravity-client",
                 )
 
             self.assertIsInstance(client, AntigravityCloudCodeClient)
@@ -2620,7 +2621,7 @@ class TestResponseHook(unittest.TestCase):
         self.assertTrue(response.request.extensions["antigravity_retry_ready"])
         self.assertEqual(response.request.extensions["antigravity_retry_action"], "rotated-after-429")
 
-    def test_token_watchdog_resolves_family_index_when_global_active_invalid(self):
+    def test_token_watchdog_uses_gemini_family_index_when_global_active_invalid(self):
         from antigravity_auth.storage import save_accounts
         from antigravity_auth.token_watchdog import _refresh_if_needed
 
@@ -2655,7 +2656,7 @@ class TestResponseHook(unittest.TestCase):
 
         def fake_refresh(auth, **kwargs):
             refresh_calls.append(auth)
-            return {"access": "access-family", "refresh": "family-rotated|proj-family", "expires": 123}
+            return {"access": "access-active", "refresh": "active-rotated|proj-active", "expires": 123}
 
         try:
             with patch("antigravity_auth.token.refresh_access_token", side_effect=fake_refresh), \
@@ -2673,9 +2674,66 @@ class TestResponseHook(unittest.TestCase):
                 sys.modules["agent.google_oauth"] = original_google_oauth
 
         self.assertEqual(refresh_calls, [{
-            "refresh": "family-refresh|proj-family|managed-family",
-            "email": "family@example.com",
+            "refresh": "active-refresh|proj-active",
+            "email": "active@example.com",
         }])
+
+    def test_token_watchdog_prefers_gemini_family_index_when_global_active_stale(self):
+        from antigravity_auth.storage import save_accounts
+        from antigravity_auth.token_watchdog import _refresh_if_needed
+
+        save_accounts({
+            "version": 4,
+            "accounts": [
+                {"email": "legacy@example.com", "refreshToken": "legacy-refresh", "projectId": "proj-legacy"},
+                {"email": "gemini@example.com", "refreshToken": "gemini-refresh", "projectId": "proj-gemini"},
+            ],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 1},
+            "cursor": 0,
+        })
+
+        fake_agent = types.ModuleType("agent")
+        fake_google_oauth = types.ModuleType("agent.google_oauth")
+        setattr(fake_google_oauth, "load_credentials", lambda: type("Creds", (), {
+            "refresh_token": "stored-refresh",
+            "expires_ms": 0,
+        })())
+        original_agent = sys.modules.get("agent")
+        original_google_oauth = sys.modules.get("agent.google_oauth")
+        sys.modules["agent"] = fake_agent
+        sys.modules["agent.google_oauth"] = fake_google_oauth
+        refresh_calls = []
+        sync_calls = []
+        config = type("Config", (), {"proactive_refresh_buffer_seconds": 1800})()
+
+        def fake_refresh(auth, **kwargs):
+            refresh_calls.append(auth)
+            return {"access": "access-gemini", "refresh": "gemini-rotated|proj-gemini", "expires": 123}
+
+        try:
+            with patch("antigravity_auth.token.refresh_access_token", side_effect=fake_refresh), \
+                 patch(
+                     "antigravity_auth.auth_sync.sync_token_to_all_auth_stores",
+                     side_effect=lambda **kwargs: sync_calls.append(kwargs) or True,
+                 ):
+                _refresh_if_needed(config)
+        finally:
+            if original_agent is None:
+                sys.modules.pop("agent", None)
+            else:
+                sys.modules["agent"] = original_agent
+            if original_google_oauth is None:
+                sys.modules.pop("agent.google_oauth", None)
+            else:
+                sys.modules["agent.google_oauth"] = original_google_oauth
+
+        self.assertEqual(refresh_calls, [{
+            "refresh": "gemini-refresh|proj-gemini",
+            "email": "gemini@example.com",
+        }])
+        self.assertEqual(sync_calls[0]["email"], "gemini@example.com")
+        self.assertEqual(sync_calls[0]["project_id"], "proj-gemini")
 
     def test_token_watchdog_does_not_log_success_when_auth_json_sync_fails(self):
         from antigravity_auth.auth_sync import AuthSyncResult

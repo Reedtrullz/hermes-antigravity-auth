@@ -37,8 +37,7 @@ class ToolNameCollisionError(ValueError):
 def normalize_antigravity_tool_name(name: object) -> str:
   raw_name = str(name or "").strip()
   normalized = _TOOL_NAME_ALLOWED_RE.sub("_", raw_name)
-  normalized = normalized.strip("_")
-  if not normalized:
+  if not normalized or not any(ch.isalnum() for ch in normalized):
     normalized = "tool"
   if not _TOOL_NAME_FIRST_RE.match(normalized):
     normalized = "_" + normalized
@@ -200,6 +199,8 @@ def _convert_tool_calls(tool_calls: list, tool_call_id_to_name: dict[str, str]) 
         args = json.loads(arguments_str)
       except (json.JSONDecodeError, ValueError):
         args = {}
+      if not isinstance(args, dict):
+        args = {}
     elif isinstance(arguments_str, dict):
       args = arguments_str
     else:
@@ -218,18 +219,18 @@ def _has_function_response(parts: list[dict]) -> bool:
   return any("functionResponse" in p for p in parts)
 
 
-def _has_text(parts: list[dict]) -> bool:
-  return any("text" in p for p in parts)
+def _has_non_function_response(parts: list[dict]) -> bool:
+  return any("functionResponse" not in p for p in parts)
 
 
 def _can_merge(existing_parts: list[dict], new_parts: list[dict]) -> bool:
-  """Consecutive same-role merging guard: don't mix functionResponse with text."""
+  """Consecutive same-role merging guard: keep function responses isolated."""
   existing_has_fr = _has_function_response(existing_parts)
   new_has_fr = _has_function_response(new_parts)
-  existing_has_text = _has_text(existing_parts)
-  new_has_text = _has_text(new_parts)
+  existing_has_non_fr = _has_non_function_response(existing_parts)
+  new_has_non_fr = _has_non_function_response(new_parts)
 
-  if (existing_has_fr and new_has_text) or (existing_has_text and new_has_fr):
+  if (existing_has_fr and new_has_non_fr) or (existing_has_non_fr and new_has_fr):
     return False
 
   return True

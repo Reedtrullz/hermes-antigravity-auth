@@ -14,11 +14,12 @@ Hermes Agent
   ├─ provider aliases: antigravity / antigravity-google / ag / gemini-cli / gemini-oauth
   ├─ Hermes Cloud Code runtime: google-gemini-cli
   ├─ wrap_code_assist_request patch: Claude body hardening before envelope wrapping
-  ├─ httpx event hooks: headers, account selection, token/account rotation
+  ├─ httpx event hooks: headers, shared-manager account selection, token/account rotation
+  ├─ Hermes 0.17 client factory patch: Antigravity transport/client selection
   └─ Antigravity auth package: OAuth, storage, accounts, transforms, watchdog
 ```
 
-The plugin authenticates Google accounts, stores Antigravity account state under `HERMES_HOME`, and registers Antigravity provider aliases that route through Hermes' native `google-gemini-cli` Cloud Code transport. It does not route through OpenRouter. On plugin load, `interceptor.py` patches `GeminiCloudCodeClient.__init__` to attach httpx request/response event hooks, and patches Hermes' `wrap_code_assist_request` helper so Claude-specific body transforms run before the native Cloud Code envelope is built. The request hook is primarily for header injection, account selection, and token sync; response handling covers token refresh and model-family/header-style-aware account rotation. A background watchdog thread proactively refreshes tokens before expiry.
+The plugin authenticates Google accounts, stores Antigravity account state under `HERMES_HOME`, and registers Antigravity provider aliases that route through Hermes' native `google-gemini-cli` Cloud Code transport. It does not route through OpenRouter. On plugin load, `interceptor.py` patches `GeminiCloudCodeClient.__init__` to attach httpx request/response event hooks, patches Hermes' `wrap_code_assist_request` helper so Claude-specific body transforms run before the native Cloud Code envelope is built, and patches Hermes 0.17 `agent_runtime_helpers` factories/resolvers so local OpenAI-style clients use the Antigravity Cloud Code transport. The request hook is primarily for header injection, shared-manager account selection, and token sync; response handling covers token refresh and model-family/header-style-aware account rotation. A background watchdog thread proactively refreshes tokens before expiry.
 
 ---
 
@@ -38,6 +39,7 @@ antigravity_auth/
 ├── tools.py                  # Hermes tool registration (google_antigravity_search)
 ├── endpoints.py              # Endpoint helper; runtime selection currently returns PROD
 ├── accounts/manager.py       # Account selection, cooldowns, persistence, rate-limit rotation
+├── accounts/shared.py        # Shared AccountManager singleton accessor
 └── transform/                # Header/model helpers plus request/response transform utilities
 
 plugins/
@@ -152,7 +154,7 @@ Environment overrides:
 
 Location: `~/.hermes/antigravity-accounts.json`
 
-The account manager stores OAuth refresh tokens, project IDs, active indices, per-family active accounts, cooldowns, quota cache state, and fingerprint metadata. Writes are atomic and honor `HERMES_HOME`.
+The account manager stores OAuth refresh tokens, project IDs, active indices, per-family active accounts, cooldowns, quota cache state, and fingerprint metadata. Writes are atomic and honor `HERMES_HOME`. Runtime hooks use `accounts.shared.get_or_create_global_manager()` so request hooks, retry paths, CLI reloads, quota state, and account rotation operate on one shared manager instead of side managers with stale state.
 
 Sensitive files:
 
@@ -164,10 +166,12 @@ Sensitive files:
 
 ## HTTP Interception
 
-On plugin load, `hermes_plugin.py` calls `interceptor.install()`. The install path patches two Hermes internals:
+On plugin load, `hermes_plugin.py` calls `interceptor.install()`. The install path patches legacy Hermes Cloud Code internals plus Hermes 0.17 runtime factories:
 
 - `GeminiCloudCodeClient.__init__`, adding httpx request/response event hooks to the internal `self._http` client.
 - `agent.gemini_cloudcode_adapter.wrap_code_assist_request`, applying Claude-specific body transforms before Hermes builds the Code Assist envelope.
+- `agent.agent_runtime_helpers.create_openai_client`, returning `AntigravityCloudCodeClient` / `AsyncAntigravityCloudCodeClient` for Antigravity provider aliases on Hermes 0.17-style runtimes.
+- Runtime-provider and auxiliary-client resolvers, keeping model selection and auxiliary clients pointed at the Antigravity transport for Antigravity aliases.
 
 The **request hook** is primarily headers and account selection:
 - Reads the Code Assist envelope only to determine the model and model family.
@@ -178,9 +182,15 @@ The **request hook** is primarily headers and account selection:
 - Preserves critical headers such as `Authorization`, `Content-Type`, `Host`, `Accept`, `Accept-Encoding`, and `Content-Length`.
 - Does not rewrite the request body.
 
-The **Claude wrapper patch** performs the body work for Claude models:
+The **Claude wrapper patch** performs the body work for legacy Cloud Code Claude models:
 - Injects IDs into Gemini `functionCall` / `functionResponse` parts so the Antigravity Claude backend can map them to Anthropic `tool_use` / `tool_result` blocks.
 - Runs `_apply_claude_transforms()`: strips stale thinking blocks unless `keep_thinking` is enabled, forces `toolConfig.functionCallingConfig.mode = "VALIDATED"`, converts `thinkingConfig` keys to snake_case, and adds placeholder required fields for empty tool schemas.
+
+The **Hermes 0.17 local client path** performs equivalent Cloud Code envelope
+construction and Claude request-body transforms inside
+`AntigravityCloudCodeClient`. It keeps the same one-shot non-stream retry
+behavior, but the body mutation happens before the request is sent by that local
+client, not in the generic httpx request hook.
 
 The **response hook** handles side effects:
 - Refreshes OAuth tokens on 401 when `proactive_token_refresh: true`.
@@ -188,7 +198,7 @@ The **response hook** handles side effects:
 - Marks model/header-style-specific rate limits and rotates after 429 when `switch_on_first_rate_limit: true`.
 - Marks endpoints as failed on 5xx server errors for the internal endpoint helper. Current endpoint selection still returns PROD, so this is not a full automatic endpoint fallback chain.
 
-**Why a headers-first hook works:** Hermes already sends a Cloud Code request envelope (`{project, model, user_prompt_id, request}`) accepted by the production `cloudcode-pa.googleapis.com` endpoint. The request hook changes headers, credentials, and account state while preserving that native body. Claude-specific body hardening happens earlier in the wrapper patch, not in the httpx request hook.
+**Why a headers-first hook works:** Hermes already sends a Cloud Code request envelope (`{project, model, user_prompt_id, request}`) accepted by the production `cloudcode-pa.googleapis.com` endpoint. The request hook changes headers, credentials, and account state while preserving that native body. Claude-specific body hardening happens earlier in the legacy wrapper patch or inside the Hermes 0.17 `AntigravityCloudCodeClient`, not in the httpx request hook.
 
 ---
 
@@ -287,7 +297,7 @@ All credential-bearing and diagnostic files use private permissions:
 
 ### Credential Packaging Guards
 
-The `antigravity_auth/_credentials.py` file is gitignored and blocked from wheel/sdist builds by `setup.py`'s `packaging_guard` module. `MANIFEST.in` provides a second layer of exclusion for sdist builds.
+The `antigravity_auth/_credentials.py` file is gitignored and blocked from wheel/sdist builds by `setup.py`'s `packaging_guard` module. `MANIFEST.in` provides a second layer of exclusion for sdist builds. Direct legacy `python setup.py sdist` and `python setup.py build_py` fail before setuptools can create `UNKNOWN-0.0.0` artifacts; release builds should run `python -m build` from a clean source archive. Wheel builds also exclude colocated `test_*.py` modules so runtime installs do not ship the test suite.
 
 ### Redaction
 

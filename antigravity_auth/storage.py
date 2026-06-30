@@ -322,13 +322,24 @@ def _load_accounts_unlocked(path: Path | None = None, *, strict: bool = False) -
 
             if "version" not in data:
                 data["version"] = 4
-            if "accounts" not in data or not isinstance(data["accounts"], list):
+            if "accounts" not in data:
+                data["accounts"] = []
+            elif not isinstance(data["accounts"], list):
+                if strict:
+                    raise AccountStoreCorruptError(f"{path} accounts value is not a list")
                 data["accounts"] = []
             if "activeIndex" not in data:
                 data["activeIndex"] = 0
             if "cursor" not in data:
                 data["cursor"] = data["activeIndex"]
-            if "activeIndexByFamily" not in data or not isinstance(data["activeIndexByFamily"], dict):
+            if "activeIndexByFamily" not in data:
+                data["activeIndexByFamily"] = {
+                    "claude": 0,
+                    "gemini": 0
+                }
+            elif not isinstance(data["activeIndexByFamily"], dict):
+                if strict:
+                    raise AccountStoreCorruptError(f"{path} activeIndexByFamily value is not an object")
                 data["activeIndexByFamily"] = {
                     "claude": 0,
                     "gemini": 0

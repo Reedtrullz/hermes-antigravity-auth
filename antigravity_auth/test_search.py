@@ -351,10 +351,48 @@ class TestExecuteSearch(unittest.TestCase):
         self.assertIn("ok", output)
         request = urlopen_mock.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(payload["project"], "project-id")
+        self.assertEqual(payload["requestType"], "agent")
+        self.assertEqual(payload["userAgent"], "antigravity")
+        self.assertTrue(payload["requestId"].startswith("search-"))
+        self.assertEqual(request.get_header("X-goog-user-project"), "project-id")
         prompt = payload["request"]["contents"][0]["parts"][0]["text"]
         self.assertIn("https://ok", prompt)
         self.assertNotIn("123", prompt)
         self.assertIn({"urlContext": {}}, payload["request"]["tools"])
+
+    def test_execute_search_omits_empty_project_from_envelope_and_header(self):
+        from unittest.mock import patch
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps({
+                    "response": {
+                        "candidates": [
+                            {"content": {"parts": [{"text": "ok"}]}}
+                        ]
+                    }
+                }).encode("utf-8")
+
+        with patch("antigravity_auth.search.urllib.request.urlopen", return_value=FakeResponse()) as urlopen_mock:
+            output = execute_search(
+                SearchArgs(query="check"),
+                "access-token",
+                "",
+                timeout_ms=1000,
+            )
+
+        self.assertIn("ok", output)
+        request = urlopen_mock.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertNotIn("project", payload)
+        self.assertIsNone(request.get_header("X-goog-user-project"))
 
     def test_http_error_body_is_redacted(self):
         from unittest.mock import patch
@@ -592,6 +630,50 @@ class TestSearchToolRegistration(unittest.TestCase):
         self.assertEqual(search_args.query, "hello")
         self.assertEqual(access_token, "gemini-access")
         self.assertEqual(project_id, "gemini-project")
+
+    def test_search_handler_uses_managed_project_when_project_id_missing(self):
+        from unittest.mock import patch
+
+        from antigravity_auth.tools import _register_search_tool
+
+        class FakeRegistry:
+            def register(self, **kwargs):
+                self.kwargs = kwargs
+
+        registry = FakeRegistry()
+        accounts_data = {
+            "activeIndex": 0,
+            "activeIndexByFamily": {"gemini": 0},
+            "accounts": [
+                {
+                    "email": "managed@example.com",
+                    "refreshToken": "managed-refresh",
+                    "projectId": "",
+                    "managedProjectId": "managed-project",
+                },
+            ],
+        }
+        with (
+            patch("antigravity_auth.storage.load_accounts", return_value=accounts_data),
+            patch("antigravity_auth.token.refresh_access_token", return_value={"access": "managed-access"}) as refresh_mock,
+            patch("antigravity_auth.search.execute_search", return_value="searched") as search_mock,
+        ):
+            _register_search_tool(registry)
+            output = registry.kwargs["handler"]({"query": "hello"})
+
+        self.assertEqual(output, "searched")
+        refresh_mock.assert_called_once_with(
+            {
+                "refresh": "managed-refresh||managed-project",
+                "email": "managed@example.com",
+            },
+            persist=True,
+            set_active=True,
+        )
+        search_args, access_token, project_id = search_mock.call_args.args
+        self.assertEqual(search_args.query, "hello")
+        self.assertEqual(access_token, "managed-access")
+        self.assertEqual(project_id, "managed-project")
 
 
 if __name__ == "__main__":

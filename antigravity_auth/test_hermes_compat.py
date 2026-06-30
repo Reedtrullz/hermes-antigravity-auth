@@ -92,6 +92,82 @@ class TestHermesCompat(unittest.TestCase):
     self.assertEqual(matching[0].status, "WARN")
     self.assertIn("not the Cloud Code transport", matching[0].detail)
 
+  def test_runtime_contract_rows_pass_for_supported_private_signatures(self):
+    from antigravity_auth.hermes_compat import detect_hermes_features
+
+    runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+
+    def resolve_runtime_provider(*, requested=None, explicit_api_key=None, explicit_base_url=None, target_model=None):
+      return {}
+
+    runtime_provider.resolve_runtime_provider = resolve_runtime_provider
+
+    auxiliary_client = types.ModuleType("agent.auxiliary_client")
+
+    def resolve_provider_client(
+      provider,
+      model=None,
+      async_mode=False,
+      raw_codex=False,
+      explicit_base_url=None,
+      explicit_api_key=None,
+      api_mode=None,
+      main_runtime=None,
+      is_vision=False,
+      task=None,
+    ):
+      return None, model
+
+    auxiliary_client.resolve_provider_client = resolve_provider_client
+
+    runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+
+    def create_openai_client(agent, client_kwargs, *, reason, shared):
+      return object()
+
+    runtime_helpers.create_openai_client = create_openai_client
+
+    with patch.dict(sys.modules, {
+      "hermes_cli": types.ModuleType("hermes_cli"),
+      "hermes_cli.runtime_provider": runtime_provider,
+      "agent": types.ModuleType("agent"),
+      "agent.auxiliary_client": auxiliary_client,
+      "agent.agent_runtime_helpers": runtime_helpers,
+    }):
+      rows = detect_hermes_features()
+
+    contracts = {row.check: row.status for row in rows if row.check.endswith("contract")}
+    self.assertEqual(contracts["Hermes runtime provider contract"], "PASS")
+    self.assertEqual(contracts["Hermes auxiliary client contract"], "PASS")
+    self.assertEqual(contracts["Hermes client factory contract"], "PASS")
+
+  def test_runtime_contract_rows_warn_for_signature_drift(self):
+    from antigravity_auth.hermes_compat import detect_hermes_features
+
+    runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+    runtime_provider.resolve_runtime_provider = lambda only_supported=None: {}
+
+    auxiliary_client = types.ModuleType("agent.auxiliary_client")
+    auxiliary_client.resolve_provider_client = lambda provider: (None, None)
+
+    runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+    runtime_helpers.create_openai_client = lambda agent, client_kwargs: object()
+
+    with patch.dict(sys.modules, {
+      "hermes_cli": types.ModuleType("hermes_cli"),
+      "hermes_cli.runtime_provider": runtime_provider,
+      "agent": types.ModuleType("agent"),
+      "agent.auxiliary_client": auxiliary_client,
+      "agent.agent_runtime_helpers": runtime_helpers,
+    }):
+      rows = detect_hermes_features()
+
+    contracts = {row.check: row for row in rows if row.check.endswith("contract")}
+    self.assertEqual(contracts["Hermes runtime provider contract"].status, "WARN")
+    self.assertEqual(contracts["Hermes auxiliary client contract"].status, "WARN")
+    self.assertEqual(contracts["Hermes client factory contract"].status, "WARN")
+    self.assertIn("signature drift", contracts["Hermes runtime provider contract"].detail)
+
   def test_model_picker_feature_helper_reports_missing_private_symbols(self):
     from antigravity_auth.hermes_compat import has_required_model_picker_features
 

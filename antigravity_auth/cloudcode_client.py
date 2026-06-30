@@ -278,11 +278,15 @@ class AntigravityCloudCodeClient:
         for event in _iter_sse_events(response):
           if isinstance(event.get("error"), dict):
             message = _error_message_from_body(event)
+            details = _recovery_details_from_error_body(
+              event, status_code=response.status_code, streaming=True,
+            )
             raise AntigravityCloudCodeError(
               message,
               code="antigravity_stream_event_error",
               status_code=response.status_code,
               response=response,
+              details=details or event,
             )
           event_payload = _unwrap_response_payload(event)
           for chunk in _translate_stream_event(event_payload, model, tool_call_indices):
@@ -977,6 +981,32 @@ def _error_message_from_body(body: dict[str, Any]) -> str:
     if isinstance(message, str) and message:
       return redact_secret_text(message)
   return redact_secret_text(str(body))
+
+
+def _recovery_details_from_error_body(
+  body: dict[str, Any],
+  *,
+  status_code: int | None,
+  streaming: bool = False,
+) -> dict[str, Any]:
+  details: dict[str, Any] = {}
+  try:
+    from .recovery import detect_error_type, extract_message_index
+    recovery_type = detect_error_type(body)
+    message_index = extract_message_index(body)
+  except Exception:
+    recovery_type = None
+    message_index = None
+
+  if recovery_type:
+    details["recoveryType"] = recovery_type
+  if message_index is not None:
+    details["messageIndex"] = message_index
+  if status_code is not None:
+    details["statusCode"] = status_code
+  if streaming:
+    details["streaming"] = True
+  return details
 
 
 def _retry_after_from_response(response: httpx.Response, body: dict[str, Any]) -> float | None:

@@ -240,10 +240,12 @@ paths:
    failed for the internal endpoint helper.
 4. **Hermes 0.17 client factory**: Newer Hermes builds that no longer expose the
    legacy Cloud Code adapter are patched through `agent.agent_runtime_helpers`.
-   The local `AntigravityCloudCodeClient` performs the same envelope transforms
-   and one-shot non-stream retry internally, while runtime-provider and auxiliary
-   resolver patches keep model selection and auxiliary clients pointed at the
-   Antigravity transport.
+   The local `AntigravityCloudCodeClient` performs the same Cloud Code envelope
+   construction, Claude request-body transforms, and one-shot non-stream retry
+   internally. Runtime-provider and auxiliary resolver patches keep model
+   selection and auxiliary clients pointed at the Antigravity transport. This is
+   the Hermes 0.17 path; the httpx request hook remains headers/account focused
+   and is not the body-mutation layer.
 5. **Endpoint routing**: Current runtime requests use production
    `cloudcode-pa.googleapis.com`. An endpoint fallback helper exists in code, but
    `select_endpoint()` currently returns PROD and Hermes' Cloud Code runtime is
@@ -253,8 +255,9 @@ paths:
    only uses cached quota data that is already present in account state.
 
 The runtime request body remains Hermes/Code Assist format except for the
-Claude-specific wrapper transforms above. Antigravity behavior is primarily
-selected by model ID, account credentials, and header style.
+Claude-specific wrapper or Hermes 0.17 local-client transforms above.
+Antigravity behavior is primarily selected by model ID, account credentials,
+the shared account manager, and header style.
 
 ### Available Models
 
@@ -463,7 +466,11 @@ hermes antigravity selftest
 `selftest` also runs the release packaging guard. If a local
 `antigravity_auth/_credentials.py` or matching bytecode cache exists, selftest
 fails until that private local credential module is moved out of the package tree
-or removed before building a wheel/sdist.
+or removed before building a wheel/sdist. Release builds should use
+`python -m build` from a clean source archive; direct legacy
+`python setup.py sdist` and `python setup.py build_py` are refused before they
+can create `UNKNOWN-0.0.0` artifacts. Wheels intentionally exclude colocated
+`test_*.py` modules.
 
 ### Auth Issues
 
@@ -596,6 +603,9 @@ hermes-antigravity-auth/
 # Install locally
 pip install -e ".[dev,yaml]"
 
+# Install release build tools
+pip install -e ".[release]"
+
 # Run tests
 python3 -m pytest antigravity_auth/ -v
 
@@ -604,10 +614,12 @@ hermes antigravity selftest
 ```
 
 CI runs the same package tests on Python 3.10, 3.11, 3.12, and 3.13, plus a
-clean source-archive install/build smoke that verifies built artifacts do not
-contain `antigravity_auth/_credentials.py`. The workflow uses Node 24-capable
-first-party actions (`actions/checkout@v6` and `actions/setup-python@v6`) to
-avoid GitHub's Node 20 JavaScript action deprecation path.
+clean source-archive install/build smoke that runs `twine check`, verifies built
+artifacts do not contain `antigravity_auth/_credentials.py`, verifies wheels do
+not contain colocated `test_*.py` modules, and uploads the checked artifacts.
+The workflow uses Node 24-capable first-party actions (`actions/checkout@v6`,
+`actions/setup-python@v6`, and `actions/upload-artifact@v7`) to avoid GitHub's
+Node 20 JavaScript action deprecation path.
 
 ---
 

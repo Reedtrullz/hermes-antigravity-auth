@@ -20,7 +20,7 @@ python3 -m pytest -k "test_name"           # Single test by name
 ## Python Conventions
 
 - Tests colocated (`test_*.py` next to source)
-- Stdlib-only (urllib, json, dataclasses) — no heavy frameworks
+- Lean runtime dependencies: `httpx` is required for Hermes transport hooks; `pyyaml` is optional; otherwise prefer stdlib helpers over heavy frameworks
 - Try/except with graceful degradation (fallback values, not crashes)
 - Named imports only — `from .module import Name`
 - PascalCase for classes, snake_case for functions/variables
@@ -79,7 +79,7 @@ Accounts rotate on rate limits. Gemini has dual quota pools (Antigravity headers
 Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and clientMetadata. History tracked (max 5), restorable.
 
 ### 7. Security Discipline
-Debug logs (0o700 dir, 0o600 files, 25-file rotation) and trace files (0o700 dir, 0o600 files, 50-file rotation) use private permissions. `redaction.py` strips OAuth tokens, bearer strings, session tokens, and client secrets from all diagnostic output. The `packaging_guard.py` module plus `MANIFEST.in` prevent `_credentials.py` from shipping in wheels/sdist.
+Debug logs (0o700 dir, 0o600 files, 25-file rotation) and trace files (0o700 dir, 0o600 files, 50-file rotation) use private permissions. `redaction.py` strips OAuth tokens, bearer strings, session tokens, and client secrets from all diagnostic output. The `packaging_guard.py` module plus `MANIFEST.in` prevent `_credentials.py` from shipping in wheels/sdist. Legacy direct `setup.py sdist/build_py` is refused before it can produce `UNKNOWN-0.0.0`; release builds should use `python -m build` from a clean source archive. Wheels intentionally exclude colocated `test_*.py` modules.
 
 ## Documentation
 

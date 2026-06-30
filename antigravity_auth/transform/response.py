@@ -231,12 +231,14 @@ def _extract_usage_from_sse_payload(body: str) -> dict[str, Any] | None:
   """Extract usage metadata from an SSE stream payload.
 
   Handles multi-line SSE data blocks by accumulating ``data:`` lines
-  until a blank line is encountered, then joining and parsing.
+  until a blank line is encountered, then joining and parsing. When a stream
+  contains multiple usage events, the latest complete usage snapshot wins.
   """
   if not isinstance(body, str):
     return None
   lines = body.split("\n")
   current_data: list[str] = []
+  latest_usage: dict[str, Any] | None = None
   for raw_line in lines:
     line = raw_line.rstrip("\r")
     if line.startswith("data:"):
@@ -253,18 +255,18 @@ def _extract_usage_from_sse_payload(body: str) -> dict[str, Any] | None:
         continue
       usage = _extract_parsed_usage(parsed)
       if usage:
-        return usage
+        latest_usage = usage
       current_data = []
   if current_data:
     data_str = "".join(current_data)
     try:
       parsed = json.loads(data_str)
     except json.JSONDecodeError:
-      return None
+      return latest_usage
     usage = _extract_parsed_usage(parsed)
     if usage:
-      return usage
-  return None
+      latest_usage = usage
+  return latest_usage
 
 
 def _extract_error_from_sse_payload(body: str) -> dict[str, Any] | None:
@@ -330,7 +332,38 @@ def _build_usage_headers(
     result["x-antigravity-prompt-token-count"] = str(usage["promptTokenCount"])
   if usage.get("candidatesTokenCount") is not None:
     result["x-antigravity-candidates-token-count"] = str(usage["candidatesTokenCount"])
+  if usage.get("thoughtsTokenCount") is not None:
+    result["x-antigravity-thoughts-token-count"] = str(usage["thoughtsTokenCount"])
   return result if result else headers or None
+
+
+def _add_streaming_recovery_metadata(
+  error: dict[str, str] | None,
+  parsed_error: dict[str, Any],
+  status_code: int,
+  headers: dict[str, str],
+) -> dict[str, Any] | None:
+  if error is None:
+    return None
+
+  metadata: dict[str, Any] = {
+    **error,
+    "streaming": True,
+    "statusCode": status_code,
+  }
+  request_id = headers.get("x-request-id", headers.get("X-Request-Id"))
+  if request_id:
+    metadata["requestId"] = request_id
+
+  try:
+    from ..recovery import extract_message_index
+    message_index = extract_message_index(parsed_error)
+  except Exception:
+    message_index = None
+  if message_index is not None:
+    metadata["messageIndex"] = message_index
+
+  return metadata
 
 
 def transform_antigravity_response(
@@ -374,6 +407,9 @@ def transform_antigravity_response(
       _, recovery_headers, error = _handle_error_response(
         parsed_error, body, status_code, resolved_headers,
         requested_model, effective_model, project_id, endpoint, debug_text,
+      )
+      error = _add_streaming_recovery_metadata(
+        error, parsed_error, status_code, resolved_headers,
       )
       return (body, _build_usage_headers(usage, recovery_headers), error)
     return (body, _build_usage_headers(usage, extra_headers_dict), None)

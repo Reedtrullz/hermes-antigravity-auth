@@ -24,6 +24,9 @@ _SECRET_KEY_FRAGMENTS = (
   "sessiontoken",
   "api_key",
   "apikey",
+  "cookie",
+  "set_cookie",
+  "setcookie",
 )
 
 _EXACT_SECRET_KEYS = {
@@ -32,6 +35,9 @@ _EXACT_SECRET_KEYS = {
   "token",
   "secret",
   "code",
+  "cookie",
+  "set_cookie",
+  "setcookie",
 }
 
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
@@ -39,16 +45,16 @@ _QUERY_SECRET_RE = re.compile(
   r"(?i)([?&](?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code|code_verifier|codeVerifier|session_token|sessionToken|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key)=)[^&#\s]+"
 )
 _JSON_SECRET_RE = re.compile(
-  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)"\s*:\s*")[^"]*(")'
+  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie)"\s*:\s*")[^"]*(")'
 )
 _PYTHON_REPR_SECRET_RE = re.compile(
-  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)'\s*:\s*')[^']*(')"
+  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie)'\s*:\s*')[^']*(')"
 )
 _FORM_SECRET_RE = re.compile(
-  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key)=([^&\s]+)"
+  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key|cookie|set-cookie|set_cookie|setCookie)=([^&\s]+)"
 )
 _HEADER_SECRET_RE = re.compile(
-  r"(?im)^(\s*(?:authorization|x-api-key|x-goog-api-key|api-key)\s*:\s*)[^\r\n]+"
+  r"(?i)(\b(?:authorization|x-api-key|x-goog-api-key|api-key|cookie|set-cookie)\s*:\s*)[^\r\n]+"
 )
 
 

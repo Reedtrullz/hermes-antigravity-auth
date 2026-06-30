@@ -1408,13 +1408,9 @@ def _install_runtime_provider_patch() -> bool:
 
   _ORIGINAL_RESOLVE_RUNTIME_PROVIDER = current
 
-  def _antigravity_resolve_runtime_provider(
-    *,
-    requested=None,
-    explicit_api_key=None,
-    explicit_base_url=None,
-    target_model=None,
-  ):
+  def _antigravity_resolve_runtime_provider(*args, **kwargs):
+    requested = kwargs.get("requested", args[0] if args else None)
+    explicit_base_url = kwargs.get("explicit_base_url")
     requested_provider = None
     try:
       requested_provider = runtime_provider.resolve_requested_provider(requested)
@@ -1426,12 +1422,7 @@ def _install_runtime_provider_patch() -> bool:
       or str(explicit_base_url or "").strip().lower().startswith("cloudcode-pa://")
     ):
       return _antigravity_runtime_payload(str(requested_provider or requested or "google-gemini-cli"))
-    return _ORIGINAL_RESOLVE_RUNTIME_PROVIDER(
-      requested=requested,
-      explicit_api_key=explicit_api_key,
-      explicit_base_url=explicit_base_url,
-      target_model=target_model,
-    )
+    return _ORIGINAL_RESOLVE_RUNTIME_PROVIDER(*args, **kwargs)
 
   _antigravity_resolve_runtime_provider._antigravity_runtime_provider_patch = True  # type: ignore[attr-defined]
   _antigravity_resolve_runtime_provider._antigravity_original = current  # type: ignore[attr-defined]
@@ -1463,18 +1454,13 @@ def _install_auxiliary_client_patch() -> bool:
 
   _ORIGINAL_RESOLVE_PROVIDER_CLIENT = current
 
-  def _antigravity_resolve_provider_client(
-    provider: str,
-    model: str = None,
-    async_mode: bool = False,
-    raw_codex: bool = False,
-    explicit_base_url: str = None,
-    explicit_api_key: str = None,
-    api_mode: str = None,
-    main_runtime: Any = None,
-    is_vision: bool = False,
-    task: str | None = None,
-  ):
+  def _antigravity_resolve_provider_client(*args, **kwargs):
+    provider = kwargs.get("provider", args[0] if args else "")
+    model = kwargs.get("model")
+    async_mode = bool(kwargs.get("async_mode", False))
+    explicit_base_url = kwargs.get("explicit_base_url")
+    explicit_api_key = kwargs.get("explicit_api_key")
+    main_runtime = kwargs.get("main_runtime")
     runtime_provider = ""
     runtime_base_url = ""
     if isinstance(main_runtime, dict):
@@ -1499,18 +1485,7 @@ def _install_auxiliary_client_patch() -> bool:
       if async_mode:
         return AsyncAntigravityCloudCodeClient(sync_client), resolved_model
       return sync_client, resolved_model
-    return _ORIGINAL_RESOLVE_PROVIDER_CLIENT(
-      provider,
-      model=model,
-      async_mode=async_mode,
-      raw_codex=raw_codex,
-      explicit_base_url=explicit_base_url,
-      explicit_api_key=explicit_api_key,
-      api_mode=api_mode,
-      main_runtime=main_runtime,
-      is_vision=is_vision,
-      task=task,
-    )
+    return _ORIGINAL_RESOLVE_PROVIDER_CLIENT(*args, **kwargs)
 
   _antigravity_resolve_provider_client._antigravity_auxiliary_client_patch = True  # type: ignore[attr-defined]
   _antigravity_resolve_provider_client._antigravity_original = current  # type: ignore[attr-defined]
@@ -1545,7 +1520,11 @@ def _install_hermes17_client_factory_patch() -> bool:
 
   _ORIGINAL_CREATE_OPENAI_CLIENT = current
 
-  def _antigravity_create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
+  def _antigravity_create_openai_client(*args, **kwargs) -> Any:
+    agent = kwargs.get("agent", args[0] if args else None)
+    client_kwargs = kwargs.get("client_kwargs", args[1] if len(args) > 1 else {})
+    reason = kwargs.get("reason", "")
+    shared = kwargs.get("shared", False)
     local_kwargs = dict(client_kwargs or {})
     if _is_antigravity_client_request(agent, local_kwargs):
       from .cloudcode_client import AntigravityCloudCodeClient
@@ -1567,7 +1546,7 @@ def _install_hermes17_client_factory_patch() -> bool:
         context,
       )
       return client
-    return _ORIGINAL_CREATE_OPENAI_CLIENT(agent, local_kwargs, reason=reason, shared=shared)
+    return _ORIGINAL_CREATE_OPENAI_CLIENT(*args, **kwargs)
 
   _antigravity_create_openai_client._antigravity_cloudcode_patch = True  # type: ignore[attr-defined]
   _antigravity_create_openai_client._antigravity_original = current  # type: ignore[attr-defined]

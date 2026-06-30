@@ -195,6 +195,25 @@ class TestTransformMessagesToContents(unittest.TestCase):
     self.assertEqual(contents[2]["role"], "user")
     self.assertEqual(len(contents[2]["parts"]), 2)
 
+  def test_function_response_does_not_merge_with_non_text_user_content(self):
+    messages = [
+      {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "read_image", "arguments": "{}"}},
+      ]},
+      {"role": "tool", "tool_call_id": "c1", "name": "read_image", "content": "done"},
+      {"role": "user", "content": [
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,abcd"}},
+      ]},
+    ]
+
+    contents, _ = transform_messages_to_contents(messages)
+
+    self.assertEqual(len(contents), 3)
+    self.assertIn("functionResponse", contents[1]["parts"][0])
+    self.assertEqual(contents[2]["parts"][0], {
+      "inlineData": {"mimeType": "image/png", "data": "abcd"}
+    })
+
   def test_assistant_with_tool_calls(self):
     messages = [
       {"role": "user", "content": "Weather in Paris?"},
@@ -327,6 +346,19 @@ class TestTransformMessagesToContents(unittest.TestCase):
     contents, system = transform_messages_to_contents(messages)
     self.assertEqual(contents[1]["parts"][0]["functionCall"]["args"], {"cmd": "df -h"})
 
+  def test_tool_calls_non_object_json_arguments_become_empty_object(self):
+    for arguments in ('["not", "object"]', '"string"', "42", "null", "true"):
+      with self.subTest(arguments=arguments):
+        messages = [
+          {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "do_it", "arguments": arguments}}
+          ]},
+        ]
+
+        contents, _ = transform_messages_to_contents(messages)
+
+        self.assertEqual(contents[0]["parts"][0]["functionCall"]["args"], {})
+
   def test_system_message_with_list_content(self):
     messages = [
       {"role": "system", "content": [{"type": "text", "text": "Be concise."}]},
@@ -418,6 +450,20 @@ class TestTransformMessagesToContents(unittest.TestCase):
     self.assertEqual(normalize_antigravity_tool_name("123/search"), "_123_search")
     with self.assertRaises(ToolNameCollisionError):
       validate_antigravity_tool_name_collisions(["mcp/query", "mcp query"])
+
+  def test_tool_name_normalization_preserves_valid_leading_underscore(self):
+    self.assertEqual(normalize_antigravity_tool_name("_private/tool"), "_private_tool")
+    messages = [
+      {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "_private/tool", "arguments": "{}"}}
+      ]},
+      {"role": "tool", "tool_call_id": "call_1", "name": "_private/tool", "content": "{}"},
+    ]
+
+    contents, _ = transform_messages_to_contents(messages)
+
+    self.assertEqual(contents[0]["parts"][0]["functionCall"]["name"], "_private_tool")
+    self.assertEqual(contents[1]["parts"][0]["functionResponse"]["name"], "_private_tool")
 
   def test_tool_result_json_object_string_preserves_structure(self):
     messages = [

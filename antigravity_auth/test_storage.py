@@ -106,6 +106,32 @@ class TestStorage(unittest.TestCase):
             }))
         self.assertEqual(path.read_text(encoding="utf-8"), original)
 
+    def test_writes_refuse_semantically_corrupt_accounts_field(self):
+        path = get_accounts_json_path()
+        original = '{"version":4,"accounts":"not-a-list","activeIndex":0}'
+        path.write_text(original, encoding="utf-8")
+        os.chmod(path, 0o600)
+
+        loaded = load_accounts()
+        self.assertEqual(loaded["accounts"], [])
+
+        with self.assertRaises(AccountStoreCorruptError):
+            update_accounts(lambda data: data)
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_writes_refuse_semantically_corrupt_family_index_map(self):
+        path = get_accounts_json_path()
+        original = '{"version":4,"accounts":[],"activeIndexByFamily":"bad"}'
+        path.write_text(original, encoding="utf-8")
+        os.chmod(path, 0o600)
+
+        loaded = load_accounts()
+        self.assertEqual(loaded["activeIndexByFamily"], {"claude": 0, "gemini": 0})
+
+        with self.assertRaises(AccountStoreCorruptError):
+            save_accounts({"version": 4, "accounts": []})
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
     def test_account_store_read_repairs_world_readable_permissions(self):
         import stat
 

@@ -539,7 +539,7 @@ def _check_active_refresh() -> DoctorRow:
     accounts = data.get("accounts", [])
     if not isinstance(accounts, list) or not accounts:
       return _row("WARN", "active token refresh", "no Antigravity accounts are registered", "Run hermes antigravity login.")
-    idx = resolve_active_account_index(data)
+    idx = resolve_active_account_index(data, family="gemini")
     account = accounts[idx]
     if not isinstance(account, dict):
       return _row("FAIL", "active token refresh", "active account entry is not an object", "Recreate the account store with hermes antigravity login.")
@@ -553,7 +553,7 @@ def _check_active_refresh() -> DoctorRow:
     })
     refreshed = refresh_access_token({"refresh": packed, "email": account.get("email")}, persist=False, set_active=False)
     if refreshed.get("access"):
-      return _row("PASS", "active token refresh", f"refresh succeeded for {account.get('email') or 'active account'}")
+      return _row("PASS", "active token refresh", f"refresh succeeded for Gemini active account {account.get('email') or idx}")
     return _row("FAIL", "active token refresh", "refresh response did not contain an access token", "Run hermes antigravity login again.")
   except Exception as exc:
     return _row("FAIL", "active token refresh", f"refresh failed: {exc}", "Run hermes antigravity login again or remove revoked accounts with hermes antigravity delete.")

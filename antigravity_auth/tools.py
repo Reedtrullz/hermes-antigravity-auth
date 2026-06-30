@@ -59,7 +59,7 @@ def _register_search_tool(registry: Any) -> None:
         if not access_token:
             return json.dumps({"error": "Failed to refresh access token"})
 
-        project_id = acc.get("projectId") or ""
+        project_id = acc.get("projectId") or acc.get("managedProjectId") or ""
 
         search_args = SearchArgs(query=query, urls=urls, thinking=True)
         return execute_search(search_args, access_token, project_id)

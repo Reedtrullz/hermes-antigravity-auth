@@ -38,11 +38,12 @@ antigravity_auth/
 
 ## Key Patterns
 
-- **Stdlib-only**: Uses `urllib.request`, `json`, `dataclasses`, `threading` — no heavy deps
+- **Lean dependencies**: `httpx` is required for Hermes transport hooks; `pyyaml` is optional; prefer stdlib helpers elsewhere
 - **Graceful degradation**: Defensive try/except with fallback values (never crashes)
 - **Config cascade**: YAML file → env var overrides → defaults
 - **Colocated tests**: `test_*.py` next to source
 - **No empty __init__.py**: `transform/__init__.py` explicitly exports all submodule APIs
+- **Release packaging**: Wheels intentionally exclude colocated `test_*.py` modules, and direct legacy `setup.py sdist/build_py` is refused before `UNKNOWN-0.0.0` artifacts can be created
 
 ## Testing
 
@@ -55,7 +56,9 @@ python3 -m pytest -k "test_name_pattern"                      # Filtered
 ## Dependencies
 
 - Python >= 3.10 (tested on 3.11+) (no f-string backslashes, modern setuptools)
+- `httpx` (runtime — Hermes Cloud Code request/response hooks and retry wrapper)
 - `pyyaml` (optional — for YAML config)
+- `build`, `twine` (release extra)
 - `pytest`, `pytest-cov` (dev)
 
 ## Submodule Guidance

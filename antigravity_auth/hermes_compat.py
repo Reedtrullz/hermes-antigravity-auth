@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import inspect
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
@@ -33,6 +34,120 @@ def _import_module(name: str) -> tuple[ModuleType | None, Exception | None]:
 
 def _missing(module: Any, names: tuple[str, ...]) -> list[str]:
   return [name for name in names if not hasattr(module, name)]
+
+
+def _accepts_call(callable_obj: Any, *args: Any, **kwargs: Any) -> tuple[bool, str]:
+  try:
+    signature = inspect.signature(callable_obj)
+  except (TypeError, ValueError):
+    return True, "signature unavailable; treating callable as compatible"
+  try:
+    signature.bind_partial(*args, **kwargs)
+  except TypeError as exc:
+    return False, f"{signature}: {exc}"
+  return True, str(signature)
+
+
+def _runtime_contract_rows() -> list[HermesFeature]:
+  rows: list[HermesFeature] = []
+
+  runtime_provider, runtime_error = _import_module("hermes_cli.runtime_provider")
+  if runtime_provider is None:
+    rows.append(HermesFeature(
+      "INFO",
+      "Hermes runtime provider contract",
+      f"hermes_cli.runtime_provider unavailable: {runtime_error}",
+      "Expected outside a Hermes Agent environment.",
+    ))
+  else:
+    resolver = getattr(runtime_provider, "resolve_runtime_provider", None)
+    if not callable(resolver):
+      rows.append(HermesFeature(
+        "WARN",
+        "Hermes runtime provider contract",
+        "resolve_runtime_provider is missing or not callable",
+        "Upgrade Hermes or keep using the standalone provider fallback.",
+      ))
+    else:
+      ok, detail = _accepts_call(
+        resolver,
+        requested="antigravity",
+        explicit_api_key=None,
+        explicit_base_url="cloudcode-pa://google",
+        target_model="gemini-3.5-flash",
+      )
+      rows.append(HermesFeature(
+        "PASS" if ok else "WARN",
+        "Hermes runtime provider contract",
+        "resolve_runtime_provider accepts Antigravity call shape: " + detail if ok else "resolve_runtime_provider signature drift: " + detail,
+        "" if ok else "Update the Antigravity runtime provider wrapper for this Hermes build.",
+      ))
+
+  auxiliary_client, auxiliary_error = _import_module("agent.auxiliary_client")
+  if auxiliary_client is None:
+    rows.append(HermesFeature(
+      "INFO",
+      "Hermes auxiliary client contract",
+      f"agent.auxiliary_client unavailable: {auxiliary_error}",
+      "Expected outside a Hermes Agent environment.",
+    ))
+  else:
+    resolver = getattr(auxiliary_client, "resolve_provider_client", None)
+    if not callable(resolver):
+      rows.append(HermesFeature(
+        "WARN",
+        "Hermes auxiliary client contract",
+        "resolve_provider_client is missing or not callable",
+        "Upgrade Hermes or avoid auxiliary Antigravity client routing.",
+      ))
+    else:
+      ok, detail = _accepts_call(
+        resolver,
+        "google-gemini-cli",
+        model="gemini-3.5-flash",
+        async_mode=False,
+        raw_codex=False,
+        explicit_base_url="cloudcode-pa://google",
+        explicit_api_key="antigravity-oauth",
+        api_mode=None,
+        main_runtime={"provider": "google-gemini-cli", "base_url": "cloudcode-pa://google"},
+        is_vision=False,
+        task=None,
+      )
+      rows.append(HermesFeature(
+        "PASS" if ok else "WARN",
+        "Hermes auxiliary client contract",
+        "resolve_provider_client accepts Antigravity call shape: " + detail if ok else "resolve_provider_client signature drift: " + detail,
+        "" if ok else "Update the Antigravity auxiliary client wrapper for this Hermes build.",
+      ))
+
+  runtime_helpers, helper_error = _import_module("agent.agent_runtime_helpers")
+  if runtime_helpers is None:
+    rows.append(HermesFeature(
+      "INFO",
+      "Hermes client factory contract",
+      f"agent.agent_runtime_helpers unavailable: {helper_error}",
+      "Expected outside a Hermes Agent environment.",
+    ))
+  else:
+    factory = getattr(runtime_helpers, "create_openai_client", None)
+    if not callable(factory):
+      rows.append(HermesFeature(
+        "WARN",
+        "Hermes client factory contract",
+        "create_openai_client is missing or not callable",
+        "Upgrade Hermes or use a build with the Hermes 0.17 client factory.",
+      ))
+    else:
+      ok, detail = _accepts_call(factory, object(), {}, reason="antigravity-contract-check", shared=False)
+      rows.append(HermesFeature(
+        "PASS" if ok else "WARN",
+        "Hermes client factory contract",
+        "create_openai_client accepts Antigravity call shape: " + detail if ok else "create_openai_client signature drift: " + detail,
+        "" if ok else "Update the Antigravity client-factory wrapper for this Hermes build.",
+      ))
+
+  return rows
 
 
 def detect_hermes_features() -> list[HermesFeature]:
@@ -179,6 +294,7 @@ def detect_hermes_features() -> list[HermesFeature]:
       optional = "project context hook available" if hasattr(client, "_ensure_project_context") else "project context hook unavailable"
       rows.append(HermesFeature("PASS", "Hermes Cloud Code adapter internals", f"required adapter symbols are available; {optional}"))
 
+  rows.extend(_runtime_contract_rows())
   return rows
 
 
