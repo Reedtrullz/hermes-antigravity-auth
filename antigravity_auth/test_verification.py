@@ -192,6 +192,7 @@ class TestProbeAccountHealth(unittest.TestCase):
         from antigravity_auth.verification import verify_account_access
 
         mock_response = MagicMock()
+        mock_response.read.return_value = b""
         mock_urlopen.return_value.__enter__.return_value = mock_response
 
         result = verify_account_access(
@@ -204,9 +205,53 @@ class TestProbeAccountHealth(unittest.TestCase):
         req = mock_urlopen.call_args.args[0]
         body = json.loads(req.data.decode("utf-8"))
         self.assertEqual(body["project"], "managed-project")
+        self.assertEqual(body["requestType"], "agent")
+        self.assertEqual(body["userAgent"], "antigravity")
+        self.assertTrue(body["requestId"].startswith("agent-"))
         self.assertEqual(body["model"], "gemini-3.5-flash-low")
         self.assertEqual(body["request"]["model"], "gemini-3.5-flash-low")
         self.assertEqual(req.headers["X-goog-user-project"], "managed-project")
+        self.assertEqual(req.headers["Accept"], "text/event-stream")
+
+    @patch("antigravity_auth.verification.urllib.request.urlopen")
+    def test_verify_account_access_detects_http_200_validation_error_sse(self, mock_urlopen):
+        from antigravity_auth.verification import verify_account_access
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = (
+            b'data: {"error": {"message": "validation_required clientSecret=blocked-secret", '
+            b'"verification_url": "https://accounts.google.com/signin/continue?plt=123"}}\n\n'
+        )
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = verify_account_access(
+            {"email": "user@example.com"},
+            "access-token",
+            project_id="managed-project",
+        )
+
+        self.assertEqual(result.status, "blocked")
+        self.assertNotIn("blocked-secret", result.message)
+        self.assertIn("[REDACTED]", result.message)
+        self.assertIsNotNone(result.verify_url)
+        self.assertIn("accounts.google.com", result.verify_url)
+
+    @patch("antigravity_auth.verification.urllib.request.urlopen")
+    def test_verify_account_access_detects_http_200_inband_error_sse(self, mock_urlopen):
+        from antigravity_auth.verification import verify_account_access
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'data: {"error": {"message": "quota exhausted"}}\n\n'
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        result = verify_account_access(
+            {"email": "user@example.com"},
+            "access-token",
+            project_id="managed-project",
+        )
+
+        self.assertEqual(result.status, "error")
+        self.assertIn("quota exhausted", result.message)
 
     @patch("antigravity_auth.verification.urllib.request.urlopen")
     def test_verify_account_access_redacts_error_message(self, mock_urlopen):

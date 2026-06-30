@@ -266,16 +266,36 @@ def _patch_hermes_model_picker() -> None:
 
     try:
       replacement = models.ProviderEntry("google-gemini-cli", label, desc)
-      for index, entry in enumerate(models.CANONICAL_PROVIDERS):
+      canonical = list(models.CANONICAL_PROVIDERS)
+      for index, entry in enumerate(canonical):
         if entry.slug == "google-gemini-cli":
-          models.CANONICAL_PROVIDERS[index] = replacement
+          canonical[index] = replacement
           break
+      else:
+        canonical.append(replacement)
+      models.CANONICAL_PROVIDERS = canonical
     except Exception as exc:
       _record(
         "WARN",
         "canonical provider row",
         f"could not patch Hermes canonical provider row: {exc}",
         "Antigravity may still work but may keep the native Google display label.",
+      )
+
+    try:
+      known_names = getattr(models, "_KNOWN_PROVIDER_NAMES", None)
+      if known_names is not None:
+        names_to_add = {"google-gemini-cli", *ANTIGRAVITY_ALIASES}
+        try:
+          known_names.update(names_to_add)
+        except AttributeError:
+          models._KNOWN_PROVIDER_NAMES = set(known_names) | names_to_add
+    except Exception as exc:
+      _record(
+        "WARN",
+        "model picker known provider names",
+        f"could not refresh hermes_cli.models known provider names: {exc}",
+        "Antigravity aliases may not be accepted by Hermes model picker validation until restart.",
       )
 
     groups_ready = has_grouping_features(models)

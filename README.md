@@ -115,11 +115,12 @@ hermes antigravity login
 hermes antigravity doctor
 ```
 
-`doctor` prints PASS/WARN/FAIL checks for the plugin entrypoint, Hermes Cloud
-Code interceptor symbols, automatic retry status and streaming replay limits,
-account-store locking backend, account/auth store permissions, config parsing,
-model registry, and active-account token refresh. It redacts secrets in all
-output.
+`doctor` prints PASS/WARN/FAIL checks for the plugin entrypoint, provider
+registration, Hermes Cloud Code routing, automatic retry status and streaming
+replay limits, account-store locking, account/auth permissions, config parsing,
+local packaging blockers, model registry, and active-account token refresh. It
+redacts secrets in all output. Use `hermes antigravity doctor --offline` to skip
+the live token-refresh probe.
 
 ### 6. Use it
 
@@ -211,7 +212,7 @@ Provider aliases (`antigravity`, `antigravity-google`, `ag`, `gemini-cli`,
 `gemini-oauth`) all resolve to Hermes' canonical `google-gemini-cli` Cloud Code
 runtime. This plugin does not route through OpenRouter.
 
-On plugin load, `antigravity_auth/interceptor.py` patches two Hermes Cloud Code
+On plugin load, `antigravity_auth/interceptor.py` patches Hermes Cloud Code
 paths:
 
 1. **Claude request preparation**: The patched `wrap_code_assist_request` path
@@ -237,11 +238,17 @@ paths:
    starts, so automatic retry is limited to non-streaming replayable requests;
    skipped retries are logged with a reason. 5xx responses mark the endpoint
    failed for the internal endpoint helper.
-4. **Endpoint routing**: Current runtime requests use production
+4. **Hermes 0.17 client factory**: Newer Hermes builds that no longer expose the
+   legacy Cloud Code adapter are patched through `agent.agent_runtime_helpers`.
+   The local `AntigravityCloudCodeClient` performs the same envelope transforms
+   and one-shot non-stream retry internally, while runtime-provider and auxiliary
+   resolver patches keep model selection and auxiliary clients pointed at the
+   Antigravity transport.
+5. **Endpoint routing**: Current runtime requests use production
    `cloudcode-pa.googleapis.com`. An endpoint fallback helper exists in code, but
    `select_endpoint()` currently returns PROD and Hermes' Cloud Code runtime is
    not wired to retry alternate sandbox endpoints automatically.
-5. **Quota monitoring**: `hermes antigravity check` fetches live quota data from
+6. **Quota monitoring**: `hermes antigravity check` fetches live quota data from
    Google's API and prints remaining percentage per bucket. Soft quota selection
    only uses cached quota data that is already present in account state.
 
@@ -399,7 +406,8 @@ hermes antigravity list        # List accounts
 hermes antigravity set-project <email_or_index> <project_id>
 hermes antigravity check       # Check quota status
 hermes antigravity doctor      # Diagnose install/config/auth state
-hermes antigravity selftest    # Offline transform/package round-trip smoke
+hermes antigravity doctor --offline
+hermes antigravity selftest    # Offline transform/package/release-safety smoke
 ```
 
 ---
@@ -452,6 +460,11 @@ transform/package path:
 hermes antigravity selftest
 ```
 
+`selftest` also runs the release packaging guard. If a local
+`antigravity_auth/_credentials.py` or matching bytecode cache exists, selftest
+fails until that private local credential module is moved out of the package tree
+or removed before building a wheel/sdist.
+
 ### Auth Issues
 
 1. Delete the accounts file:
@@ -503,11 +516,12 @@ Code IDs Google currently accepts. Prefer `gemini-3.5-flash`,
 failures, but current runtime selection still uses the production Cloud Code
 endpoint.
 
-**Streaming automatic retry**: The retry wrapper can replay bounded 401/403/429
-requests only when httpx still has a replayable body and the response is not
-being streamed. Streaming/SSE responses cannot be safely replayed after the
-stream starts, so doctor warns about this limitation; retry the user request
-manually if a streaming call fails after token refresh or account rotation.
+**Streaming automatic retry**: The generic HTTPX wrapper and Hermes 0.17 local
+Cloud Code client can replay bounded non-streaming 401/403/429 requests once
+when the body is replayable. Streaming/SSE responses cannot be safely replayed
+after the stream starts, so doctor warns about this limitation; retry the user
+request manually if a streaming call fails after token refresh or account
+rotation.
 
 **Soft quota cache**: Account selection can honor cached quota state when it is
 present. The live `check`/`quota` commands persist normalized quota buckets
@@ -584,6 +598,9 @@ pip install -e ".[dev,yaml]"
 
 # Run tests
 python3 -m pytest antigravity_auth/ -v
+
+# Offline transform and release-safety smoke
+hermes antigravity selftest
 ```
 
 CI runs the same package tests on Python 3.10, 3.11, 3.12, and 3.13, plus a

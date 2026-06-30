@@ -645,6 +645,36 @@ class TestTransformAntigravityResponse(unittest.TestCase):
             "Hello!",
         )
 
+    def test_thought_signature_only_part_becomes_reasoning(self):
+        response_body = json.dumps({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [
+                            {"text": "internal reasoning", "thoughtSignature": "sig-1"},
+                            {"text": "visible answer"},
+                        ],
+                    },
+                }],
+            },
+        })
+
+        body, extra_headers, error = transform_antigravity_response(
+            response_body,
+            streaming=False,
+            status_code=200,
+            headers={"content-type": "application/json"},
+        )
+
+        self.assertIsNone(error)
+        parsed = json.loads(body)
+        reasoning = parsed["candidates"][0]["content"]["parts"][0]
+        self.assertEqual(reasoning["type"], "reasoning")
+        self.assertEqual(reasoning["thought"], True)
+        self.assertNotIn("thoughtSignature", reasoning)
+        self.assertEqual(reasoning["providerMetadata"]["anthropic"]["signature"], "sig-1")
+        self.assertEqual(parsed["candidates"][0]["reasoning_content"], "internal reasoning")
+
     def test_no_content_type_defaults_to_json(self):
         """Treats body as JSON when no content-type header is set."""
         response_body = json.dumps({"response": {"text": "ok"}})

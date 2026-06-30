@@ -25,6 +25,18 @@ _process_lock_warning_guard = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
+class StorageCorruptError(RuntimeError):
+    """Base class for malformed on-disk Antigravity storage."""
+
+
+class AccountStoreCorruptError(StorageCorruptError):
+    """Raised when a write transaction would overwrite a malformed account store."""
+
+
+class AuthStoreCorruptError(StorageCorruptError):
+    """Raised when a write transaction would overwrite a malformed auth.json."""
+
+
 def _secret_file_opener(path: str, flags: int) -> int:
     """Open secret-bearing temp files with private permissions immediately."""
     return os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
@@ -32,6 +44,15 @@ def _secret_file_opener(path: str, flags: int) -> int:
 
 def _lock_file_opener(path: str, flags: int) -> int:
     return os.open(path, flags | os.O_CREAT, 0o600)
+
+
+def _ensure_private_file(path: Path) -> None:
+    """Best-effort permission repair before reading a secret-bearing store."""
+    try:
+        if path.exists():
+            os.chmod(path, 0o600)
+    except Exception as exc:
+        logger.debug("Could not repair permissions for %s: %s", path, exc)
 
 
 def _process_lock_backend_name() -> tuple[str | None, str]:
@@ -284,16 +305,19 @@ def _default_accounts_storage() -> dict[str, Any]:
     }
 
 
-def _load_accounts_unlocked(path: Path | None = None) -> dict[str, Any]:
+def _load_accounts_unlocked(path: Path | None = None, *, strict: bool = False) -> dict[str, Any]:
     default_storage = _default_accounts_storage()
     path = get_accounts_json_path() if path is None else path
     if not path.exists():
         return default_storage
 
     try:
+        _ensure_private_file(path)
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             if not isinstance(data, dict):
+                if strict:
+                    raise AccountStoreCorruptError(f"{path} top-level JSON value is not an object")
                 return default_storage
 
             if "version" not in data:
@@ -317,7 +341,11 @@ def _load_accounts_unlocked(path: Path | None = None) -> dict[str, Any]:
                     family["gemini"] = 0
 
             return data
-    except Exception:
+    except AccountStoreCorruptError:
+        raise
+    except Exception as exc:
+        if strict:
+            raise AccountStoreCorruptError(f"Could not parse {path}: {exc}") from exc
         return default_storage
 
 
@@ -359,6 +387,8 @@ def save_accounts(storage_dict: dict[str, Any]) -> None:
     path = get_accounts_json_path()
     with _process_file_lock(path.with_suffix(".lock")):
         with _accounts_store_lock:
+            if path.exists():
+                _load_accounts_unlocked(path, strict=True)
             _save_accounts_unlocked(path, storage_dict)
 
 
@@ -373,7 +403,7 @@ def update_accounts(mutator: Callable[[dict[str, Any]], None | dict[str, Any]]) 
     path = get_accounts_json_path()
     with _process_file_lock(path.with_suffix(".lock")):
         with _accounts_store_lock:
-            current = _load_accounts_unlocked(path)
+            current = _load_accounts_unlocked(path, strict=True)
             replacement = mutator(current)
             if replacement is not None:
                 if not isinstance(replacement, dict):
@@ -450,14 +480,20 @@ def sync_token_to_auth_json(
 
             if path.exists():
                 try:
+                    _ensure_private_file(path)
                     with open(path, "r", encoding="utf-8") as f:
                         parsed = json.load(f)
-                        if isinstance(parsed, dict):
-                            data = parsed
-                except Exception:
-                    pass
+                    if not isinstance(parsed, dict):
+                        raise AuthStoreCorruptError(f"{path} top-level JSON value is not an object")
+                    data = parsed
+                except AuthStoreCorruptError:
+                    raise
+                except Exception as exc:
+                    raise AuthStoreCorruptError(f"Could not parse {path}: {exc}") from exc
 
-            if "providers" not in data or not isinstance(data["providers"], dict):
+            if "providers" in data and not isinstance(data["providers"], dict):
+                raise AuthStoreCorruptError(f"{path} providers field is not an object")
+            if "providers" not in data:
                 data["providers"] = {}
 
             data["providers"]["antigravity"] = {
@@ -508,6 +544,7 @@ def get_active_token_from_auth_json() -> dict[str, str]:
 
     with _auth_store_lock:
         try:
+            _ensure_private_file(path)
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if not isinstance(data, dict):

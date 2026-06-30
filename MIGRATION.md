@@ -118,8 +118,15 @@ plugins:
 ```bash
 hermes antigravity login    # Authenticate with Google
 hermes antigravity quota    # Check remaining quota
-hermes antigravity selftest # Offline transform/package round-trip smoke
+hermes antigravity doctor   # Diagnose local routing/auth state
+hermes antigravity doctor --offline  # Skip live token refresh probe
+hermes antigravity selftest # Offline transform/package/release-safety smoke
 ```
+
+`selftest` fails if a local `antigravity_auth/_credentials.py` or matching
+bytecode cache exists under the package tree. Move local OAuth credentials to
+environment variables or `~/.hermes/antigravity-credentials.json` before building
+a wheel/sdist.
 
 ---
 

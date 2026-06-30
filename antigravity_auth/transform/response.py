@@ -96,6 +96,21 @@ def _transform_gemini_candidate(candidate: Any) -> Any:
       transformed_parts.append(transformed)
       continue
 
+    if part.get("thoughtSignature") and isinstance(part.get("text"), str):
+      thinking_text = part.get("text") or ""
+      thinking_texts.append(str(thinking_text))
+      transformed = {
+        **part,
+        "type": "reasoning",
+        "thought": True,
+      }
+      transformed["providerMetadata"] = {
+        "anthropic": {"signature": part.get("thoughtSignature")},
+      }
+      transformed.pop("thoughtSignature", None)
+      transformed_parts.append(transformed)
+      continue
+
     function_call = part.get("functionCall")
     if isinstance(function_call, dict):
       args = function_call.get("args", {})
@@ -149,6 +164,19 @@ def _transform_thinking_parts(response: dict[str, Any]) -> dict[str, Any]:
           transformed.pop("signature", None)
           transformed.pop("thoughtSignature", None)
 
+        transformed_content.append(transformed)
+      elif isinstance(block, dict) and block.get("thoughtSignature") and isinstance(block.get("text"), str):
+        thinking_text = block.get("text") or ""
+        reasoning_texts.append(str(thinking_text))
+        transformed = {
+          **block,
+          "type": "reasoning",
+          "thought": True,
+        }
+        transformed["providerMetadata"] = {
+          "anthropic": {"signature": block.get("thoughtSignature")},
+        }
+        transformed.pop("thoughtSignature", None)
         transformed_content.append(transformed)
       else:
         transformed_content.append(block)

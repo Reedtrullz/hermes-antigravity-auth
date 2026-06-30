@@ -4,6 +4,10 @@ from __future__ import annotations
 import json
 import re
 
+_TOOL_NAME_MAX_LENGTH = 64
+_TOOL_NAME_ALLOWED_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
+_TOOL_NAME_FIRST_RE = re.compile(r"^[A-Za-z_]")
+
 
 def is_claude_model(model: str) -> bool:
   return "claude" in model.lower()
@@ -24,6 +28,76 @@ def parse_data_url(url: str) -> tuple[str, str] | None:
   if match:
     return (match.group(1), match.group(2))
   return None
+
+
+class ToolNameCollisionError(ValueError):
+  """Raised when two tool names normalize to the same Antigravity function name."""
+
+
+def normalize_antigravity_tool_name(name: object) -> str:
+  raw_name = str(name or "").strip()
+  normalized = _TOOL_NAME_ALLOWED_RE.sub("_", raw_name)
+  normalized = normalized.strip("_")
+  if not normalized:
+    normalized = "tool"
+  if not _TOOL_NAME_FIRST_RE.match(normalized):
+    normalized = "_" + normalized
+  return normalized[:_TOOL_NAME_MAX_LENGTH]
+
+
+def validate_antigravity_tool_name_collisions(names: list[str]) -> dict[str, str]:
+  mapping: dict[str, str] = {}
+  reverse: dict[str, str] = {}
+  for raw_name in names:
+    normalized = normalize_antigravity_tool_name(raw_name)
+    existing = reverse.get(normalized)
+    if existing is not None and existing != raw_name:
+      raise ToolNameCollisionError(
+        f"Tool names {existing!r} and {raw_name!r} both normalize to {normalized!r}"
+      )
+    reverse[normalized] = raw_name
+    mapping[raw_name] = normalized
+  return mapping
+
+
+def _normalize_tool_response_content(content: object) -> dict:
+  if isinstance(content, dict):
+    return content
+  parsed: object = content
+  if isinstance(content, str):
+    stripped = content.strip()
+    if stripped:
+      try:
+        parsed = json.loads(stripped)
+      except (json.JSONDecodeError, ValueError):
+        parsed = content
+  if isinstance(parsed, dict):
+    return parsed
+  return {"content": parsed if parsed is not None else ""}
+
+
+def _is_thinking_like_part(part: dict) -> bool:
+  part_type = str(part.get("type") or "").lower()
+  return (
+    part.get("thought") is True
+    or "thoughtSignature" in part
+    or "signature" in part and part_type in ("thinking", "reasoning", "redacted_thinking")
+    or part_type in ("thinking", "reasoning", "redacted_thinking")
+  )
+
+
+def _convert_thinking_like_part(part: dict) -> dict | None:
+  text = part.get("thinking") or part.get("text") or ""
+  if not isinstance(text, str):
+    text = str(text)
+  result: dict = {
+    "thought": True,
+    "text": text,
+  }
+  signature = part.get("thoughtSignature") or part.get("signature")
+  if signature:
+    result["thoughtSignature"] = signature
+  return result
 
 
 def _convert_content_part(
@@ -53,7 +127,7 @@ def _convert_content_part(
     return None
 
   if part_type == "tool_use":
-    name = part.get("name", "")
+    name = normalize_antigravity_tool_name(part.get("name", ""))
     args = part.get("input", {})
     if not isinstance(args, dict):
       args = {}
@@ -66,15 +140,18 @@ def _convert_content_part(
     return {"functionCall": function_call}
 
   if part_type == "tool_result":
-    name = part.get("name", "")
+    name = normalize_antigravity_tool_name(part.get("name", "")) if part.get("name") else ""
     content = part.get("content", "")
     result_id = part.get("tool_use_id") or part.get("id")
     if not name and result_id and tool_call_id_to_name is not None:
       name = tool_call_id_to_name.get(str(result_id), "")
-    function_response = {"name": name, "response": {"content": content}}
+    function_response = {"name": name, "response": _normalize_tool_response_content(content)}
     if result_id:
       function_response["id"] = str(result_id)
     return {"functionResponse": function_response}
+
+  if _is_thinking_like_part(part):
+    return _convert_thinking_like_part(part)
 
   if "text" in part and isinstance(part["text"], str):
     return {"text": part["text"]}
@@ -116,7 +193,7 @@ def _convert_tool_calls(tool_calls: list, tool_call_id_to_name: dict[str, str]) 
     fn = call.get("function")
     if not isinstance(fn, dict):
       continue
-    name = fn.get("name", "")
+    name = normalize_antigravity_tool_name(fn.get("name", ""))
     arguments_str = fn.get("arguments", "{}")
     if isinstance(arguments_str, str):
       try:
@@ -132,7 +209,7 @@ def _convert_tool_calls(tool_calls: list, tool_call_id_to_name: dict[str, str]) 
     if tool_call_id:
       function_call["id"] = tool_call_id
       if name:
-        tool_call_id_to_name[str(tool_call_id)] = str(name)
+        tool_call_id_to_name[str(tool_call_id)] = name
     parts.append({"functionCall": function_call})
   return parts
 
@@ -203,10 +280,12 @@ def transform_messages_to_contents(
     if role == "tool":
       tool_call_id = msg.get("tool_call_id")
       tool_name = msg.get("name") or tool_call_id_to_name.get(str(tool_call_id), "")
+      if tool_name:
+        tool_name = normalize_antigravity_tool_name(tool_name)
       tool_content = msg.get("content", "")
       function_response = {
         "name": tool_name,
-        "response": {"content": tool_content},
+        "response": _normalize_tool_response_content(tool_content),
       }
       if tool_call_id:
         function_response["id"] = tool_call_id

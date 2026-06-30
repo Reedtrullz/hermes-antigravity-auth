@@ -1,4 +1,5 @@
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from . import project_context
@@ -70,6 +71,40 @@ class TestProjectContext(unittest.TestCase):
     self.assertEqual(response["response"]["cloudaicompanionProject"], "project-123")
     self.assertEqual(post_url.call_count, 2)
     self.assertIn("/v1internal/operations/op-1", post_url.call_args_list[1].args[0])
+
+  def test_post_url_redacts_http_error_body(self):
+    class ErrorBody:
+      def read(self):
+        return b'{"error":{"message":"Authorization: Bearer project-secret client_secret=context-secret"}}'
+
+      def close(self):
+        pass
+
+    with patch.object(project_context.urllib.request, "urlopen", side_effect=urllib.error.HTTPError(
+      "https://example.invalid",
+      403,
+      "Forbidden",
+      {},
+      ErrorBody(),
+    )):
+      with self.assertRaises(project_context.CodeAssistError) as ctx:
+        project_context._post_url("https://example.invalid", {}, "access-token")
+
+    message = str(ctx.exception)
+    self.assertNotIn("project-secret", message)
+    self.assertNotIn("context-secret", message)
+    self.assertIn("[REDACTED]", message)
+
+  def test_post_url_redacts_url_error(self):
+    with patch.object(project_context.urllib.request, "urlopen", side_effect=urllib.error.URLError(
+      "Authorization: Bearer network-secret"
+    )):
+      with self.assertRaises(project_context.CodeAssistError) as ctx:
+        project_context._post_url("https://example.invalid", {}, "access-token")
+
+    message = str(ctx.exception)
+    self.assertNotIn("network-secret", message)
+    self.assertIn("[REDACTED]", message)
 
 
 if __name__ == "__main__":

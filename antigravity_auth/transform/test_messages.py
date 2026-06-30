@@ -3,11 +3,14 @@ from __future__ import annotations
 import unittest
 
 from antigravity_auth.transform.messages import (
+  ToolNameCollisionError,
   is_claude_model,
   is_gemini_model,
   is_gpt_oss_model,
+  normalize_antigravity_tool_name,
   parse_data_url,
   transform_messages_to_contents,
+  validate_antigravity_tool_name_collisions,
 )
 
 
@@ -397,3 +400,64 @@ class TestTransformMessagesToContents(unittest.TestCase):
         "id": "tu1",
       }},
     )
+
+  def test_tool_names_are_normalized_for_calls_and_results(self):
+    messages = [
+      {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "mcp/query", "arguments": "{}"}}
+      ]},
+      {"role": "tool", "tool_call_id": "call_1", "name": "mcp/query", "content": "{}"},
+    ]
+
+    contents, _ = transform_messages_to_contents(messages)
+
+    self.assertEqual(contents[0]["parts"][0]["functionCall"]["name"], "mcp_query")
+    self.assertEqual(contents[1]["parts"][0]["functionResponse"]["name"], "mcp_query")
+
+  def test_tool_name_normalization_handles_leading_digit_and_collision(self):
+    self.assertEqual(normalize_antigravity_tool_name("123/search"), "_123_search")
+    with self.assertRaises(ToolNameCollisionError):
+      validate_antigravity_tool_name_collisions(["mcp/query", "mcp query"])
+
+  def test_tool_result_json_object_string_preserves_structure(self):
+    messages = [
+      {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "get_data", "arguments": "{}"}}
+      ]},
+      {"role": "tool", "tool_call_id": "call_1", "content": '{"ok": true, "items": [1, 2]}'},
+    ]
+
+    contents, _ = transform_messages_to_contents(messages)
+
+    self.assertEqual(
+      contents[1]["parts"][0]["functionResponse"]["response"],
+      {"ok": True, "items": [1, 2]},
+    )
+
+  def test_tool_result_list_and_scalar_wrap_as_content(self):
+    for raw_content, expected in (
+      ('["a", "b"]', {"content": ["a", "b"]}),
+      ("42", {"content": 42}),
+      ({"ok": True}, {"ok": True}),
+    ):
+      with self.subTest(raw_content=raw_content):
+        messages = [
+          {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "get_data", "arguments": "{}"}}
+          ]},
+          {"role": "tool", "tool_call_id": "call_1", "content": raw_content},
+        ]
+        contents, _ = transform_messages_to_contents(messages)
+        self.assertEqual(contents[1]["parts"][0]["functionResponse"]["response"], expected)
+
+  def test_thought_signature_part_is_not_flattened_to_plain_text(self):
+    messages = [
+      {"role": "assistant", "content": [
+        {"text": "internal reasoning", "thoughtSignature": "sig-1"},
+      ]},
+    ]
+
+    contents, _ = transform_messages_to_contents(messages)
+
+    self.assertEqual(contents[0]["parts"][0]["thought"], True)
+    self.assertEqual(contents[0]["parts"][0]["thoughtSignature"], "sig-1")

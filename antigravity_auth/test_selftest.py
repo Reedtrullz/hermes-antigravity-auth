@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -7,7 +8,8 @@ class TestSelftest(unittest.TestCase):
   def test_run_selftest_passes_offline_round_trip(self):
     from antigravity_auth.selftest import run_selftest
 
-    rows = run_selftest()
+    with tempfile.TemporaryDirectory() as tmpdir:
+      rows = run_selftest(packaging_root=tmpdir)
 
     self.assertTrue(rows)
     self.assertTrue(all(row.status == "PASS" for row in rows))
@@ -16,6 +18,22 @@ class TestSelftest(unittest.TestCase):
     self.assertIn("request envelope", checks)
     self.assertIn("response transform", checks)
     self.assertIn("plugin manifests", checks)
+    self.assertIn("packaging guard", checks)
+
+  def test_run_selftest_fails_when_packaging_root_has_local_credentials(self):
+    from pathlib import Path
+    from antigravity_auth.selftest import run_selftest
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      package_dir = Path(tmpdir) / "antigravity_auth"
+      package_dir.mkdir()
+      (package_dir / "_credentials.py").write_text("DUMMY = 'not-a-secret'\n", encoding="utf-8")
+      rows = run_selftest(packaging_root=tmpdir)
+
+    packaging_rows = [row for row in rows if row.check == "packaging guard"]
+    self.assertEqual(len(packaging_rows), 1)
+    self.assertEqual(packaging_rows[0].status, "FAIL")
+    self.assertIn("_credentials.py", packaging_rows[0].detail)
 
   def test_format_selftest_rows_reports_failure(self):
     from antigravity_auth.selftest import SelftestRow, format_selftest_rows

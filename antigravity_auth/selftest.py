@@ -186,12 +186,22 @@ def _check_plugin_manifest_generation() -> list[SelftestRow]:
     return [_fail("plugin manifests", str(exc))]
 
 
-def run_selftest() -> list[SelftestRow]:
+def _check_packaging_guard(root: str | Path | None = None) -> list[SelftestRow]:
+  try:
+    from .packaging_guard import assert_no_local_credentials_module
+    assert_no_local_credentials_module(root)
+    return [_ok("packaging guard", "No local credential module would be included in a wheel/sdist")]
+  except Exception as exc:
+    return [_fail("packaging guard", str(exc))]
+
+
+def run_selftest(*, packaging_root: str | Path | None = None) -> list[SelftestRow]:
   """Run offline round-trip checks without credentials, network, or Hermes."""
   rows: list[SelftestRow] = []
   rows.extend(_check_request_round_trip())
   rows.extend(_check_response_round_trip())
   rows.extend(_check_plugin_manifest_generation())
+  rows.extend(_check_packaging_guard(packaging_root))
   return rows
 
 

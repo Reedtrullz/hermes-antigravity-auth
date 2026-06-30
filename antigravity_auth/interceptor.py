@@ -1573,8 +1573,15 @@ def _install_hermes17_client_factory_patch() -> bool:
   _antigravity_create_openai_client._antigravity_original = current  # type: ignore[attr-defined]
   helpers.create_openai_client = _antigravity_create_openai_client
   _HERMES17_FACTORY_PATCHED = True
-  _install_runtime_provider_patch()
-  _install_auxiliary_client_patch()
+  runtime_patch = _install_runtime_provider_patch()
+  auxiliary_patch = _install_auxiliary_client_patch()
+  if not runtime_patch or not auxiliary_patch:
+    logger.warning(
+      "Antigravity Hermes 0.17 client factory installed with partial resolver coverage "
+      "(runtime_provider=%s, auxiliary_client=%s)",
+      runtime_patch,
+      auxiliary_patch,
+    )
   _trace("install-ok", mode="hermes17-client-factory")
   logger.info("Antigravity Hermes 0.17 Cloud Code client factory installed")
   return True
@@ -1792,12 +1799,22 @@ def get_routing_health() -> dict[str, Any]:
     detail = "interceptor, global HTTP hook, Cloud Code adapter patch, and Claude transforms are active"
     fix = ""
   elif installed and factory_patch and hermes17_ready and transform_ready:
-    status = "ready"
-    if _RUNTIME_PROVIDER_PATCHED and _AUXILIARY_CLIENT_PATCHED:
-      detail = "Hermes 0.17 client factory and resolvers route Antigravity models through Cloud Code transforms"
+    if hermes17_resolvers_ready and not (_RUNTIME_PROVIDER_PATCHED and _AUXILIARY_CLIENT_PATCHED):
+      status = "degraded"
+      missing = []
+      if not _RUNTIME_PROVIDER_PATCHED:
+        missing.append("Hermes runtime provider patch")
+      if not _AUXILIARY_CLIENT_PATCHED:
+        missing.append("Hermes auxiliary client patch")
+      detail = "Hermes 0.17 client factory is active, but resolver coverage is incomplete: missing " + ", ".join(missing)
+      fix = "Ensure the antigravity provider plugin is enabled and restart Hermes."
     else:
-      detail = "Hermes 0.17 client factory routes Antigravity models through Cloud Code transforms"
-    fix = ""
+      status = "ready"
+      if _RUNTIME_PROVIDER_PATCHED and _AUXILIARY_CLIENT_PATCHED:
+        detail = "Hermes 0.17 client factory and resolvers route Antigravity models through Cloud Code transforms"
+      else:
+        detail = "Hermes 0.17 client factory routes Antigravity models through Cloud Code transforms"
+      fix = ""
   elif not adapter_ready:
     status = "degraded" if hermes17_ready else "blocked"
     missing = [name for name in ("GeminiCloudCodeClient", "wrap_code_assist_request") if name not in adapter_symbols]

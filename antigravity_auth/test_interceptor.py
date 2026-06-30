@@ -1376,6 +1376,52 @@ class TestRoutingHealth(unittest.TestCase):
             interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]
             interceptor._ORIGINAL_WRAP_CODE_ASSIST = original[2]
 
+    def test_routing_health_degraded_when_hermes17_resolver_patches_missing(self):
+        import antigravity_auth.interceptor as interceptor
+
+        fake_runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+        fake_runtime_helpers.create_openai_client = lambda *args, **kwargs: None
+        fake_runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+        fake_runtime_provider.resolve_runtime_provider = lambda *args, **kwargs: None
+        fake_auxiliary_client = types.ModuleType("agent.auxiliary_client")
+        fake_auxiliary_client.resolve_provider_client = lambda *args, **kwargs: None
+        fake_agent = types.ModuleType("agent")
+        fake_agent.__path__ = []
+        fake_hermes_cli = types.ModuleType("hermes_cli")
+        fake_hermes_cli.__path__ = []
+
+        original = (
+            interceptor._PATCHED,
+            interceptor._HERMES17_FACTORY_PATCHED,
+            interceptor._RUNTIME_PROVIDER_PATCHED,
+            interceptor._AUXILIARY_CLIENT_PATCHED,
+        )
+        try:
+            interceptor._PATCHED = False
+            interceptor._HERMES17_FACTORY_PATCHED = True
+            interceptor._RUNTIME_PROVIDER_PATCHED = False
+            interceptor._AUXILIARY_CLIENT_PATCHED = False
+            with patch.dict(sys.modules, {
+                "agent": fake_agent,
+                "agent.gemini_cloudcode_adapter": None,
+                "agent.agent_runtime_helpers": fake_runtime_helpers,
+                "agent.auxiliary_client": fake_auxiliary_client,
+                "hermes_cli": fake_hermes_cli,
+                "hermes_cli.runtime_provider": fake_runtime_provider,
+            }):
+                health = interceptor.get_routing_health()
+
+            self.assertEqual(health["status"], "degraded")
+            self.assertFalse(health["claude_routing_ready"])
+            self.assertIn("resolver coverage is incomplete", health["detail"])
+            self.assertIn("Hermes runtime provider patch", health["detail"])
+            self.assertIn("Hermes auxiliary client patch", health["detail"])
+        finally:
+            interceptor._PATCHED = original[0]
+            interceptor._HERMES17_FACTORY_PATCHED = original[1]
+            interceptor._RUNTIME_PROVIDER_PATCHED = original[2]
+            interceptor._AUXILIARY_CLIENT_PATCHED = original[3]
+
     def test_routing_health_explains_native_adapter_is_not_compatible(self):
         import antigravity_auth.interceptor as interceptor
 

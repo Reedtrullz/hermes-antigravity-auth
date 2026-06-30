@@ -530,6 +530,106 @@ class TestAccountManagerWithAccounts(unittest.TestCase):
         assert result is not None
         self.assertEqual(result.email, "alice@example.com")
 
+    def test_sticky_skips_current_account_below_health_threshold(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a"},
+                {"email": "bob@example.com", "refreshToken": "refresh-bob", "projectId": "proj-b"},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        manager.health_tracker.record_failure(0)
+        manager.health_tracker.record_failure(0)
+
+        result = manager.get_current_or_next_for_family("gemini", strategy="sticky")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "bob@example.com")
+
+    def test_round_robin_skips_accounts_below_health_threshold(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a"},
+                {"email": "bob@example.com", "refreshToken": "refresh-bob", "projectId": "proj-b"},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        manager.health_tracker.record_failure(0)
+        manager.health_tracker.record_failure(0)
+
+        result = manager.get_current_or_next_for_family("gemini", strategy="round-robin")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "bob@example.com")
+
+    def test_hybrid_skips_accounts_below_health_threshold(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a", "lastUsed": 0},
+                {"email": "bob@example.com", "refreshToken": "refresh-bob", "projectId": "proj-b", "lastUsed": 100},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        manager.health_tracker.record_failure(0)
+        manager.health_tracker.record_failure(0)
+
+        result = manager.get_current_or_next_for_family("gemini", strategy="hybrid")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.email, "bob@example.com")
+
+    def test_all_accounts_below_health_threshold_returns_none(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a"},
+                {"email": "bob@example.com", "refreshToken": "refresh-bob", "projectId": "proj-b"},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        for index in (0, 1):
+            manager.health_tracker.record_failure(index)
+            manager.health_tracker.record_failure(index)
+
+        result = manager.get_current_or_next_for_family("gemini", strategy="round-robin")
+
+        self.assertIsNone(result)
+
+    def test_other_account_available_ignores_low_health_accounts(self) -> None:
+        data = {
+            "version": 4,
+            "accounts": [
+                {"email": "alice@example.com", "refreshToken": "refresh-alice", "projectId": "proj-a"},
+                {"email": "bob@example.com", "refreshToken": "refresh-bob", "projectId": "proj-b"},
+            ],
+            "activeIndex": 0,
+            "cursor": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        manager = self._make_manager(data)
+        manager.health_tracker.record_failure(1)
+        manager.health_tracker.record_failure(1)
+
+        self.assertFalse(manager.has_other_account_with_antigravity_available(0, "gemini"))
+
     def test_malformed_cached_quota_does_not_block_selection(self) -> None:
         """Bad quota cache shapes should not make an otherwise usable account unavailable."""
         data = {

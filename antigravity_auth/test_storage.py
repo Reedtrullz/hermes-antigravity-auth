@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from antigravity_auth.storage import (
+    AccountStoreCorruptError,
+    AuthStoreCorruptError,
     get_hermes_home,
     get_auth_json_path,
     get_accounts_json_path,
@@ -83,6 +85,38 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(len(loaded["accounts"]), 1)
         self.assertEqual(loaded["accounts"][0]["email"], "test@example.com")
         self.assertEqual(loaded["accounts"][0]["refreshToken"], "refresh_123")
+
+    def test_load_accounts_is_lenient_but_writes_refuse_malformed_existing_store(self):
+        path = get_accounts_json_path()
+        original = "{not-json"
+        path.write_text(original, encoding="utf-8")
+        os.chmod(path, 0o600)
+
+        loaded = load_accounts()
+        self.assertEqual(loaded["accounts"], [])
+
+        with self.assertRaises(AccountStoreCorruptError):
+            save_accounts({"version": 4, "accounts": []})
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+        with self.assertRaises(AccountStoreCorruptError):
+            update_accounts(lambda data: data.setdefault("accounts", []).append({
+                "email": "new@example.com",
+                "refreshToken": "refresh",
+            }))
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_account_store_read_repairs_world_readable_permissions(self):
+        import stat
+
+        save_accounts({"version": 4, "accounts": []})
+        path = get_accounts_json_path()
+        os.chmod(path, 0o644)
+
+        loaded = load_accounts()
+
+        self.assertEqual(loaded["accounts"], [])
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
 
     def test_process_lock_creates_private_lock_file_and_can_reacquire(self):
         import os
@@ -298,6 +332,39 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(active_updated["access_token"], "acc_updated")
         self.assertEqual(active_updated["refresh_token"], "ref_updated")
         self.assertEqual(active_updated["project_id"], "proj_updated")
+
+    def test_sync_token_to_auth_json_refuses_malformed_existing_auth_json(self):
+        auth_path = get_auth_json_path()
+        original = "{not-json"
+        auth_path.write_text(original, encoding="utf-8")
+        os.chmod(auth_path, 0o600)
+
+        with self.assertRaises(AuthStoreCorruptError):
+            sync_token_to_auth_json(
+                access_token="acc_111",
+                refresh_token="ref_222",
+                project_id="proj_333",
+                email="user@example.com",
+            )
+
+        self.assertEqual(auth_path.read_text(encoding="utf-8"), original)
+
+    def test_auth_json_read_repairs_world_readable_permissions(self):
+        import stat
+
+        sync_token_to_auth_json(
+            access_token="acc_111",
+            refresh_token="ref_222",
+            project_id="proj_333",
+            email="user@example.com",
+        )
+        auth_path = get_auth_json_path()
+        os.chmod(auth_path, 0o644)
+
+        active = get_active_token_from_auth_json()
+
+        self.assertEqual(active["access_token"], "acc_111")
+        self.assertEqual(stat.S_IMODE(os.stat(auth_path).st_mode), 0o600)
 
     def test_sync_token_to_auth_json_creates_private_lock_and_preserves_unrelated_providers(self):
         import stat

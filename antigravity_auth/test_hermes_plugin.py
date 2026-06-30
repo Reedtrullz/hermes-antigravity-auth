@@ -173,6 +173,46 @@ class TestHermesPluginRegister(unittest.TestCase):
     self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
     self.assertIn("gemini-3.5-flash-high", fake_models._PROVIDER_MODELS["google-gemini-cli"])
 
+  def test_provider_plugin_appends_missing_canonical_provider_and_updates_known_names(self):
+    from collections import namedtuple
+
+    import antigravity_auth.hermes_provider_plugin as provider_mod
+
+    ProviderEntry = namedtuple("ProviderEntry", "slug label tui_desc")
+    fake_models = types.ModuleType("hermes_cli.models")
+    fake_models.ProviderEntry = ProviderEntry
+    fake_models._PROVIDER_MODELS = {}
+    fake_models._PROVIDER_LABELS = {}
+    fake_models._PROVIDER_ALIASES = {}
+    fake_models.CANONICAL_PROVIDERS = [
+      ProviderEntry("gemini", "Google AI Studio", "Google AI Studio"),
+    ]
+    fake_models.PROVIDER_GROUPS = {
+      "google": ("Google Gemini", ["gemini"]),
+    }
+    fake_models._SLUG_TO_GROUP = {
+      "gemini": "google",
+    }
+    fake_models._KNOWN_PROVIDER_NAMES = {"gemini"}
+
+    fake_hermes_cli = types.ModuleType("hermes_cli")
+    fake_hermes_cli.models = fake_models
+
+    with patch.dict(sys.modules, {
+        "hermes_cli": fake_hermes_cli,
+        "hermes_cli.models": fake_models,
+    }), \
+        patch.object(provider_mod, "_set_oauth_env_from_credentials"):
+      provider_mod._patch_hermes_model_picker()
+
+    canonical_slugs = [entry.slug for entry in fake_models.CANONICAL_PROVIDERS]
+    self.assertIn("google-gemini-cli", canonical_slugs)
+    self.assertEqual(fake_models._PROVIDER_LABELS["google-gemini-cli"], "Google Antigravity")
+    self.assertEqual(fake_models._PROVIDER_ALIASES["ag"], "google-gemini-cli")
+    self.assertIn("google-gemini-cli", fake_models._KNOWN_PROVIDER_NAMES)
+    self.assertIn("ag", fake_models._KNOWN_PROVIDER_NAMES)
+    self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
+
   def test_provider_plugin_handles_three_tuple_provider_groups(self):
     from collections import namedtuple
 

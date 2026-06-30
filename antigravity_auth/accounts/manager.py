@@ -385,8 +385,9 @@ class AccountManager:
         current, family, soft_quota_threshold_percent, soft_quota_cache_ttl_ms, model
       )
       if not is_limited and not is_over and not is_account_cooling_down(current):
-        self._mark_touched_for_quota(current, quota_key)
-        return current
+        if self._health_tracker.is_usable(current.index):
+          self._mark_touched_for_quota(current, quota_key)
+          return current
 
     next_acc = self._get_next_for_family(
       family, model, header_style,
@@ -413,12 +414,13 @@ class AccountManager:
       and not self._is_over_soft_quota(a, family, soft_quota_threshold_percent,
                                         soft_quota_cache_ttl_ms, model)
       and not is_account_cooling_down(a)
+      and self._health_tracker.is_usable(a.index)
     ]
 
     if not available:
       import logging
       _logger = logging.getLogger(__name__)
-      _logger.warning("All %d accounts are currently rate-limited or cooling down for family=%s",
+      _logger.warning("All %d accounts are currently rate-limited, cooling down, over quota, or below health threshold for family=%s",
                       len(self._accounts), family)
       # Clear expired limits as a recovery attempt — they may have just expired
       for a in self._accounts:
@@ -448,6 +450,7 @@ class AccountManager:
       and not self._is_over_quota_simple(a, family, soft_quota_threshold_percent,
                                           soft_quota_cache_ttl_ms, model)
       and not is_account_cooling_down(a)
+      and self._health_tracker.is_usable(a.index)
     ]
 
     if not candidates:
@@ -539,6 +542,7 @@ class AccountManager:
       and a.enabled is not False
       and not is_account_cooling_down(a)
       and not is_rate_limited_for_header_style(a.rate_limit_reset_times, family, "antigravity", model)
+      and self._health_tracker.is_usable(a.index)
       for a in self._accounts
     )
 

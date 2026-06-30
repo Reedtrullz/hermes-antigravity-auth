@@ -312,6 +312,12 @@ The underlying API uses these tool formats:
 - ❌ `mcp/query` - Invalid (slashes not allowed)
 - ❌ `123_tool` - Invalid (must start with letter or underscore)
 
+The Python plugin normalizes OpenAI/Hermes tool names before sending them to
+Antigravity: unsupported characters become `_`, leading digits are prefixed with
+`_`, and names are truncated to 64 characters. If two declarations normalize to
+the same backend name, the request fails early with a collision error rather
+than sending an ambiguous function set to Antigravity.
+
 ### JSON Schema Support
 
 | Feature | Status | Notes |
@@ -396,6 +402,11 @@ data: {"response": {"candidates": [{"content": {"role": "model", "parts": [{"tex
 
 ```
 
+Valid SSE framing may use either `data: {...}` or `data:{...}`, CRLF or LF line
+breaks, multi-line `data:` blocks, and a final event without a trailing blank
+line. The plugin parser accepts these variants and treats in-band `error` frames
+as errors even when the HTTP status is 200.
+
 ### Response Fields
 
 | Field | Description |
@@ -464,6 +475,10 @@ When the model wants to call a function:
 }
 ```
 
+Function result payloads preserve structured objects. If a tool result is a JSON
+object string, it is parsed and sent as the `response` object. JSON arrays,
+scalars, and plain text are wrapped as `{ "content": value }`.
+
 ---
 
 ## Thinking / Extended Reasoning
@@ -503,6 +518,11 @@ Gemini models return thinking with signatures:
   ]
 }
 ```
+
+The plugin treats `thoughtSignature` text parts as reasoning even when the
+backend omits an explicit `thought: true` flag. The signature is moved into
+provider metadata in transformed responses so it does not appear as ordinary
+assistant answer text.
 
 ### Thinking Response (Claude)
 
@@ -584,8 +604,8 @@ The following Anthropic/Vertex AI features are **NOT supported**:
 | JSON Schema `const` | Unknown field (use `enum: [value]`) |
 | JSON Schema `$ref` | Not supported (inline instead) |
 | JSON Schema `$defs` | Not supported (inline instead) |
-| Tool names with `/` | Invalid (use `_` or `:` instead) |
-| Tool names starting with digit | Invalid (must start with letter/underscore) |
+| Tool names with `/` | Invalid at backend; plugin normalizes `/` to `_` before send |
+| Tool names starting with digit | Invalid at backend; plugin prefixes `_` before send |
 
 ---
 

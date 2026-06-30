@@ -9,7 +9,12 @@ import unittest
 
 import httpx
 
-from antigravity_auth.cloudcode_client import AntigravityCloudCodeClient
+from antigravity_auth.cloudcode_client import (
+  AntigravityCloudCodeClient,
+  AntigravityCloudCodeError,
+  _fallback_translate_gemini_response,
+  _translate_stream_event,
+)
 
 
 def _selected_account(project_id: str = "project-123") -> dict:
@@ -132,6 +137,41 @@ class TestAntigravityCloudCodeClient(unittest.TestCase):
     self.assertNotIn("project", body)
     self.assertNotIn("x-goog-user-project", captured[0].headers)
 
+  def test_non_stream_request_normalizes_httpx_timeout_extension(self):
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+      request.read()
+      captured.append(request)
+      return httpx.Response(
+        200,
+        json={"response": {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}},
+        request=request,
+      )
+
+    client = AntigravityCloudCodeClient(
+      http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+    with patch(
+      "antigravity_auth.cloudcode_client.get_config",
+      return_value=SimpleNamespace(cli_first=False),
+    ), patch(
+      "antigravity_auth.cloudcode_client._select_request_account",
+      return_value=_selected_account(),
+    ):
+      response = client.chat.completions.create(
+        model="gemini-3.5-flash-low",
+        messages=[{"role": "user", "content": "hello"}],
+        timeout=httpx.Timeout(connect=1.0, read=2.0, write=3.0, pool=4.0),
+      )
+
+    self.assertEqual(response.choices[0].message.content, "ok")
+    self.assertEqual(
+      captured[0].extensions["timeout"],
+      {"connect": 1.0, "read": 2.0, "write": 3.0, "pool": 4.0},
+    )
+
   def test_stream_request_returns_openai_like_chunks(self):
     captured: list[httpx.Request] = []
 
@@ -179,6 +219,210 @@ class TestAntigravityCloudCodeClient(unittest.TestCase):
     self.assertEqual(captured[0].headers["accept"], "text/event-stream")
     self.assertEqual(chunks[0].choices[0].delta.content, "hello")
     self.assertEqual(chunks[-1].choices[0].finish_reason, "stop")
+
+  def test_stream_parser_accepts_no_space_crlf_and_final_event_without_blank_line(self):
+    payload = {
+      "response": {
+        "candidates": [{
+          "content": {"role": "model", "parts": [{"text": "hello"}]},
+          "finishReason": "STOP",
+        }],
+      },
+    }
+    bodies = [
+      f"data:{json.dumps(payload)}\r\n\r\n",
+      f"data:{json.dumps(payload)}",
+    ]
+
+    for body in bodies:
+      with self.subTest(body=body):
+        def handler(request: httpx.Request) -> httpx.Response:
+          request.read()
+          return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+            request=request,
+          )
+
+        client = AntigravityCloudCodeClient(
+          http_client=httpx.Client(transport=httpx.MockTransport(handler))
+        )
+
+        with patch(
+          "antigravity_auth.cloudcode_client.get_config",
+          return_value=SimpleNamespace(cli_first=False),
+        ), patch(
+          "antigravity_auth.cloudcode_client._select_request_account",
+          return_value=_selected_account(),
+        ):
+          chunks = list(client.chat.completions.create(
+            model="gemini-3.5-flash-low",
+            messages=[{"role": "user", "content": "hello"}],
+            stream=True,
+          ))
+
+        self.assertEqual(chunks[0].choices[0].delta.content, "hello")
+
+  def test_non_stream_retries_once_after_response_hook_marks_ready(self):
+    for status in (401, 403, 429):
+      with self.subTest(status=status):
+        captured: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+          request.read()
+          captured.append(request)
+          if len(captured) == 1:
+            return httpx.Response(status, json={"error": {"message": "retry me"}}, request=request)
+          return httpx.Response(
+            200,
+            json={"response": {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]}},
+            request=request,
+          )
+
+        def fake_response_hook(response: httpx.Response) -> None:
+          if response.status_code == status:
+            response.request.extensions["antigravity_retry_ready"] = True
+
+        def fake_request_hook(request: httpx.Request) -> None:
+          self.assertNotIn("authorization", request.headers)
+          request.headers["Authorization"] = "Bearer fresh-token"
+
+        client = AntigravityCloudCodeClient(
+          http_client=httpx.Client(transport=httpx.MockTransport(handler))
+        )
+        with patch(
+          "antigravity_auth.cloudcode_client.get_config",
+          return_value=SimpleNamespace(cli_first=False),
+        ), patch(
+          "antigravity_auth.cloudcode_client._select_request_account",
+          return_value=_selected_account(),
+        ), patch(
+          "antigravity_auth.cloudcode_client._process_response_hooks",
+          side_effect=fake_response_hook,
+        ), patch(
+          "antigravity_auth.interceptor._antigravity_request_hook",
+          side_effect=fake_request_hook,
+        ):
+          response = client.chat.completions.create(
+            model="gemini-3.5-flash-low",
+            messages=[{"role": "user", "content": "hello"}],
+          )
+
+        self.assertEqual(response.choices[0].message.content, "ok")
+        self.assertEqual(len(captured), 2)
+        self.assertTrue(captured[1].extensions["antigravity_retry_attempted"])
+        self.assertEqual(captured[1].extensions["antigravity_retry_original_status"], status)
+        self.assertEqual(captured[1].headers["authorization"], "Bearer fresh-token")
+
+  def test_non_stream_does_not_retry_without_retry_ready_marker(self):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+      request.read()
+      calls.append(request)
+      return httpx.Response(429, json={"error": {"message": "quota"}}, request=request)
+
+    client = AntigravityCloudCodeClient(
+      http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+    with patch(
+      "antigravity_auth.cloudcode_client.get_config",
+      return_value=SimpleNamespace(cli_first=False),
+    ), patch(
+      "antigravity_auth.cloudcode_client._select_request_account",
+      return_value=_selected_account(),
+    ), patch(
+      "antigravity_auth.cloudcode_client._process_response_hooks",
+      return_value=None,
+    ):
+      with self.assertRaises(AntigravityCloudCodeError):
+        client.chat.completions.create(
+          model="gemini-3.5-flash-low",
+          messages=[{"role": "user", "content": "hello"}],
+        )
+
+    self.assertEqual(len(calls), 1)
+
+  def test_streaming_error_does_not_replay_even_when_retry_ready(self):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+      request.read()
+      calls.append(request)
+      return httpx.Response(429, json={"error": {"message": "quota"}}, request=request)
+
+    def fake_response_hook(response: httpx.Response) -> None:
+      response.request.extensions["antigravity_retry_ready"] = True
+
+    client = AntigravityCloudCodeClient(
+      http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+    with patch(
+      "antigravity_auth.cloudcode_client.get_config",
+      return_value=SimpleNamespace(cli_first=False),
+    ), patch(
+      "antigravity_auth.cloudcode_client._select_request_account",
+      return_value=_selected_account(),
+    ), patch(
+      "antigravity_auth.cloudcode_client._process_response_hooks",
+      side_effect=fake_response_hook,
+    ):
+      with self.assertRaises(AntigravityCloudCodeError):
+        list(client.chat.completions.create(
+          model="gemini-3.5-flash-low",
+          messages=[{"role": "user", "content": "hello"}],
+          stream=True,
+        ))
+
+    self.assertEqual(len(calls), 1)
+
+  def test_fallback_non_stream_translates_function_calls_and_reasoning(self):
+    response = _fallback_translate_gemini_response(
+      {
+        "candidates": [{
+          "content": {
+            "parts": [
+              {"text": "internal", "thoughtSignature": "sig"},
+              {"functionCall": {"id": "call_1", "name": "mcp/query", "args": {"q": "hi"}}},
+            ],
+          },
+          "finishReason": "FUNCTION_CALL",
+        }],
+      },
+      model="gemini-3.5-flash-low",
+    )
+
+    message = response.choices[0].message
+    self.assertIsNone(message.content)
+    self.assertEqual(message.reasoning_content, "internal")
+    self.assertEqual(message.tool_calls[0].id, "call_1")
+    self.assertEqual(message.tool_calls[0].function.name, "mcp_query")
+    self.assertEqual(message.tool_calls[0].function.arguments, '{"q":"hi"}')
+    self.assertEqual(response.choices[0].finish_reason, "tool_calls")
+
+  def test_fallback_stream_translates_function_call_delta(self):
+    chunks = _translate_stream_event(
+      {
+        "candidates": [{
+          "content": {
+            "parts": [
+              {"functionCall": {"id": "call_1", "name": "mcp/query", "args": {"q": "hi"}}},
+            ],
+          },
+        }],
+      },
+      "gemini-3.5-flash-low",
+      {},
+    )
+
+    tool_call = chunks[0].choices[0].delta.tool_calls[0]
+    self.assertEqual(tool_call.index, 0)
+    self.assertEqual(tool_call.id, "call_1")
+    self.assertEqual(tool_call.function.name, "mcp_query")
+    self.assertEqual(tool_call.function.arguments, '{"q":"hi"}')
 
 
 if __name__ == "__main__":

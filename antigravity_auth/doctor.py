@@ -55,9 +55,20 @@ def _check_entrypoint() -> DoctorRow:
       selected = list(eps.select(group="hermes_agent.plugins"))
     else:
       selected = list(eps.get("hermes_agent.plugins", []))  # type: ignore[attr-defined]
-    for ep in selected:
-      if ep.name == "antigravity-cli" and ep.value == "antigravity_auth.hermes_plugin":
+    matches = [
+      ep for ep in selected
+      if ep.name == "antigravity-cli" and ep.value == "antigravity_auth.hermes_plugin"
+    ]
+    if len(matches) == 1:
         return _row("PASS", "plugin entrypoint", "antigravity-cli entrypoint is installed")
+    if len(matches) > 1:
+      details = ", ".join(f"{ep.name}={ep.value}" for ep in matches)
+      return _row(
+        "WARN",
+        "plugin entrypoint",
+        f"duplicate antigravity-cli entrypoints are installed: {details}",
+        "Remove stale package metadata or reinstall hermes-antigravity-auth once in the Hermes Python environment.",
+      )
     return _row(
       "WARN",
       "plugin entrypoint",
@@ -172,9 +183,12 @@ def _check_interceptor() -> DoctorRow:
     from . import interceptor
     if interceptor.is_installed():
       health = interceptor.get_routing_health()
-      if health.get("hermes17_client_factory_patch_active"):
-        return _row("PASS", "interceptor", "Hermes 0.17 Antigravity client factory is installed in this process")
-      return _row("PASS", "interceptor", "interceptor is installed in this process")
+      status = str(health.get("status", "blocked"))
+      row_status = "PASS" if status == "ready" else "WARN" if status == "degraded" else "FAIL"
+      detail = str(health.get("detail") or "interceptor is installed in this doctor process")
+      if status == "ready":
+        detail = detail + "; ready in this doctor process"
+      return _row(row_status, "interceptor", detail, str(health.get("fix", "")))
     adapter_error = ""
     try:
       adapter = importlib.import_module("agent.gemini_cloudcode_adapter")
@@ -217,17 +231,23 @@ def _check_routing_health() -> list[DoctorRow]:
 def _check_retry_behavior() -> DoctorRow:
   try:
     from . import interceptor
-    if hasattr(interceptor, "_send_with_antigravity_retry") and hasattr(interceptor, "_clone_request_for_retry"):
+    from . import cloudcode_client
+    if (
+      hasattr(interceptor, "_send_with_antigravity_retry")
+      and hasattr(interceptor, "_clone_request_for_retry")
+      and hasattr(interceptor, "_response_is_retryable")
+      and hasattr(cloudcode_client, "_retry_non_stream_response")
+    ):
       return _row(
         "PASS",
         "automatic retry",
-        "enabled for replayable non-streaming 401/403/429 responses; streaming responses cannot be replayed automatically",
+        "enabled for replayable non-streaming 401/403/429 responses in both generic HTTPX and Hermes 0.17 Cloud Code client paths; streaming responses cannot be replayed automatically",
         "If a streaming request fails after token refresh or account rotation, retry the user request manually.",
       )
     return _row(
       "FAIL",
       "automatic retry",
-      "retry wrapper symbols are missing",
+      "retry wrapper symbols are missing for generic HTTPX or Hermes 0.17 Cloud Code client paths",
       "Reinstall hermes-antigravity-auth or upgrade to a build with bounded retry support.",
     )
   except Exception as exc:
@@ -499,6 +519,20 @@ def _check_oauth_client_credentials() -> DoctorRow:
     return _row("FAIL", "OAuth client credentials", f"could not inspect credentials: {exc}", "Run hermes antigravity set-credentials.")
 
 
+def _check_packaging_guard() -> DoctorRow:
+  try:
+    from .packaging_guard import assert_no_local_credentials_module
+    assert_no_local_credentials_module()
+    return _row("PASS", "packaging guard", "no local antigravity_auth/_credentials.py packaging blocker found")
+  except Exception as exc:
+    return _row(
+      "WARN",
+      "packaging guard",
+      f"local release packaging blocker detected: {exc}",
+      "Move local credentials to environment variables or ~/.hermes/antigravity-credentials.json before building a wheel/sdist.",
+    )
+
+
 def _check_active_refresh() -> DoctorRow:
   try:
     data = load_accounts()
@@ -545,15 +579,15 @@ def _check_model_registry() -> DoctorRow:
     return _row("FAIL", "model registry", f"could not import model registry: {exc}", "Reinstall hermes-antigravity-auth.")
 
 
-def run_doctor() -> list[DoctorRow]:
+def run_doctor(*, offline: bool = False) -> list[DoctorRow]:
   rows: list[DoctorRow] = []
   rows.append(_check_entrypoint())
   rows.append(_check_package_metadata())
   rows.extend(_check_hermes_adapter())
+  rows.extend(_check_provider_registration())
   rows.append(_check_interceptor())
   rows.extend(_check_routing_health())
   rows.append(_check_retry_behavior())
-  rows.extend(_check_provider_registration())
   rows.extend(_check_installed_wrappers())
   rows.append(_check_account_store_locking())
   rows.append(_check_hermes_home_permissions())
@@ -561,7 +595,16 @@ def run_doctor() -> list[DoctorRow]:
   rows.extend(_check_auth_files())
   rows.extend(_check_config())
   rows.append(_check_oauth_client_credentials())
-  rows.append(_check_active_refresh())
+  rows.append(_check_packaging_guard())
+  if offline:
+    rows.append(_row(
+      "INFO",
+      "active token refresh",
+      "skipped because doctor was run with --offline",
+      "Run hermes antigravity doctor without --offline to verify the active account refresh token.",
+    ))
+  else:
+    rows.append(_check_active_refresh())
   rows.append(_check_model_registry())
   redacted_rows = redact_secrets([row.__dict__ for row in rows])
   return [
@@ -586,7 +629,7 @@ def format_doctor_rows(rows: list[DoctorRow]) -> str:
   return "\n".join(lines)
 
 
-def print_doctor() -> bool:
-  rows = run_doctor()
+def print_doctor(*, offline: bool = False) -> bool:
+  rows = run_doctor(offline=offline)
   print(format_doctor_rows(rows))
   return not any(row.status == "FAIL" for row in rows)

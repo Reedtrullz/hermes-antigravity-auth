@@ -109,11 +109,89 @@ class TestDoctor(unittest.TestCase):
         retry_rows = [row for row in rows if row.check == "automatic retry"]
         self.assertEqual(len(retry_rows), 1)
         self.assertEqual(retry_rows[0].status, "PASS")
+        self.assertIn("Hermes 0.17 Cloud Code client", retry_rows[0].detail)
         self.assertIn("streaming responses cannot be replayed", retry_rows[0].detail)
 
         output = format_doctor_rows(rows)
         self.assertIn("PASS automatic retry", output)
+        self.assertIn("Hermes 0.17 Cloud Code client", output)
         self.assertIn("streaming responses cannot be replayed", output)
+
+    def test_doctor_warns_on_duplicate_entrypoints(self):
+        from types import SimpleNamespace
+        from antigravity_auth.doctor import _check_entrypoint
+
+        test_case = self
+
+        class FakeEntryPoints(list):
+            def select(self, *, group):
+                test_case.assertEqual(group, "hermes_agent.plugins")
+                return self
+
+        entries = FakeEntryPoints([
+            SimpleNamespace(name="antigravity-cli", value="antigravity_auth.hermes_plugin"),
+            SimpleNamespace(name="antigravity-cli", value="antigravity_auth.hermes_plugin"),
+        ])
+
+        with patch("antigravity_auth.doctor.importlib.metadata.entry_points", return_value=entries):
+            row = _check_entrypoint()
+
+        self.assertEqual(row.status, "WARN")
+        self.assertIn("duplicate", row.detail)
+        self.assertIn("reinstall", row.fix)
+
+    def test_doctor_interceptor_warns_when_installed_but_routing_degraded(self):
+        from antigravity_auth.doctor import _check_interceptor
+
+        with patch("antigravity_auth.interceptor.is_installed", return_value=True), \
+             patch("antigravity_auth.interceptor.get_routing_health", return_value={
+                 "status": "degraded",
+                 "detail": "resolver coverage is incomplete",
+                 "fix": "restart Hermes",
+             }):
+            row = _check_interceptor()
+
+        self.assertEqual(row.status, "WARN")
+        self.assertIn("resolver coverage", row.detail)
+        self.assertIn("restart Hermes", row.fix)
+
+    def test_doctor_checks_provider_registration_before_routing_health(self):
+        from antigravity_auth import doctor
+
+        calls = []
+
+        def provider_rows():
+            calls.append("provider")
+            return [doctor._row("PASS", "provider registration", "ok")]
+
+        def interceptor_row():
+            calls.append("interceptor")
+            return doctor._row("PASS", "interceptor", "ok")
+
+        def routing_rows():
+            calls.append("routing")
+            return [doctor._row("PASS", "routing health", "ok")]
+
+        with patch("antigravity_auth.doctor._check_provider_registration", side_effect=provider_rows), \
+             patch("antigravity_auth.doctor._check_interceptor", side_effect=interceptor_row), \
+             patch("antigravity_auth.doctor._check_routing_health", side_effect=routing_rows), \
+             patch("antigravity_auth.doctor._check_active_refresh") as active_refresh:
+            doctor.run_doctor(offline=True)
+
+        self.assertEqual(calls, ["provider", "interceptor", "routing"])
+        active_refresh.assert_not_called()
+
+    def test_doctor_offline_skips_active_refresh(self):
+        from antigravity_auth.doctor import run_doctor
+
+        with patch("antigravity_auth.doctor._check_active_refresh") as active_refresh:
+            rows = run_doctor(offline=True)
+
+        active_refresh.assert_not_called()
+        refresh_rows = [row for row in rows if row.check == "active token refresh"]
+        self.assertEqual(len(refresh_rows), 1)
+        self.assertEqual(refresh_rows[0].status, "INFO")
+        self.assertIn("--offline", refresh_rows[0].detail)
 
     def test_doctor_reports_claude_routing_health(self):
         from antigravity_auth.doctor import _check_routing_health

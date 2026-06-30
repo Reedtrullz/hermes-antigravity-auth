@@ -13,11 +13,13 @@ try:
     from .redaction import redact_secret_text
     from .token import format_refresh_parts, parse_refresh_parts, refresh_access_token
     from .storage import sync_token_to_auth_json
+    from .transform.envelope import build_antigravity_envelope
 except ImportError:
     from constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
     from redaction import redact_secret_text
     from token import format_refresh_parts, parse_refresh_parts, refresh_access_token
     from storage import sync_token_to_auth_json
+    from transform.envelope import build_antigravity_envelope
 
 
 @dataclass
@@ -195,6 +197,56 @@ def extract_verification_error_details(body_text: str) -> dict:
     }
 
 
+def _read_probe_response_text(response: object) -> str:
+    try:
+        body = response.read()  # type: ignore[attr-defined]
+    except Exception:
+        return ""
+    if isinstance(body, bytes):
+        return body.decode("utf-8", errors="ignore")
+    if isinstance(body, str):
+        return body
+    return ""
+
+
+def _json_payloads_from_probe_body(body_text: str) -> list[object]:
+    payloads: list[object] = []
+    trimmed = body_text.strip()
+    if trimmed.startswith("{") or trimmed.startswith("["):
+        try:
+            payloads.append(json.loads(trimmed))
+        except json.JSONDecodeError:
+            pass
+
+    for raw_line in body_text.split("\n"):
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload_text = line[5:].strip()
+        if not payload_text or payload_text == "[DONE]":
+            continue
+        try:
+            payloads.append(json.loads(payload_text))
+        except json.JSONDecodeError:
+            continue
+    return payloads
+
+
+def _first_inband_error_message(body_text: str) -> str | None:
+    for payload in _json_payloads_from_probe_body(body_text):
+        if not isinstance(payload, dict):
+            continue
+        error = payload.get("error")
+        if isinstance(error, dict):
+            message = error.get("message") or error.get("status") or error.get("code")
+            if message:
+                return redact_secret_text(decode_escaped_text(str(message)))
+            return redact_secret_text(str(error))
+        if isinstance(error, str) and error:
+            return redact_secret_text(decode_escaped_text(error))
+    return None
+
+
 def verify_account_access(
     account: dict,
     access_token: str,
@@ -210,20 +262,24 @@ def verify_account_access(
         **get_antigravity_headers(),
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
+        "Accept": "text/event-stream",
     }
     if project_id:
         headers["x-goog-user-project"] = project_id
 
-    request_body = {
+    inner_request = {
         "model": "gemini-3.5-flash-low",
-        "request": {
-            "model": "gemini-3.5-flash-low",
-            "contents": [{"role": "user", "parts": [{"text": "ping"}]}],
-            "generationConfig": {"maxOutputTokens": 1, "temperature": 0},
-        },
+        "contents": [{"role": "user", "parts": [{"text": "ping"}]}],
+        "generationConfig": {"maxOutputTokens": 1, "temperature": 0},
     }
-    if project_id:
-        request_body["project"] = project_id
+    request_body = build_antigravity_envelope(
+        request_payload=inner_request,
+        model="gemini-3.5-flash-low",
+        project_id=project_id or "",
+        header_style="antigravity",
+    )
+    if not project_id:
+        request_body.pop("project", None)
 
     data = json.dumps(request_body).encode("utf-8")
     url = f"{ANTIGRAVITY_ENDPOINT_PROD}/v1internal:streamGenerateContent?alt=sse"
@@ -232,6 +288,23 @@ def verify_account_access(
 
     try:
         with urllib.request.urlopen(req, timeout=20) as response:
+            response_body = _read_probe_response_text(response)
+            if response_body:
+                extracted = extract_verification_error_details(response_body)
+                if extracted.get("validationRequired"):
+                    return VerificationProbeResult(
+                        status="blocked",
+                        message=redact_secret_text(
+                            extracted.get("message") or "Google requires additional account verification."
+                        ),
+                        verify_url=extracted.get("verifyUrl"),
+                    )
+                inband_error = _first_inband_error_message(response_body)
+                if inband_error:
+                    return VerificationProbeResult(
+                        status="error",
+                        message=inband_error,
+                    )
             return VerificationProbeResult(
                 status="ok",
                 message="Account verification check passed.",

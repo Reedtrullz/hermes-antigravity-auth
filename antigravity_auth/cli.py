@@ -1148,7 +1148,12 @@ def setup_cli(parser):
 
     subparsers.add_parser("quota", help="Verify accounts and show quota status")
     subparsers.add_parser("check", help="Verify accounts and show quota status")
-    subparsers.add_parser("doctor", help="Run Antigravity installation and auth diagnostics")
+    doctor_parser = subparsers.add_parser("doctor", help="Run Antigravity installation and auth diagnostics")
+    doctor_parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Skip live token refresh checks",
+    )
     subparsers.add_parser("status", help="Show interceptor status and model availability")
     subparsers.add_parser(
         "selftest",
@@ -1194,7 +1199,7 @@ def handle_cli(args):
                 sys.exit(1)
         elif args.action == "doctor":
             from .doctor import print_doctor
-            if not print_doctor():
+            if not print_doctor(offline=bool(getattr(args, "offline", False))):
                 sys.exit(1)
         elif args.action == "status":
             print_interceptor_status()

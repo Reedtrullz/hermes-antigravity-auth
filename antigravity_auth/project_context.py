@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .constants import ANTIGRAVITY_ENDPOINT_PROD, get_antigravity_headers
+from .redaction import redact_secret_text
 
 FREE_TIER_ID = "free-tier"
 LEGACY_TIER_ID = "legacy-tier"
@@ -74,15 +75,41 @@ def _post_url(url: str, body: dict[str, Any], access_token: str, *, timeout: int
       return json.loads(raw) if raw else {}
   except urllib.error.HTTPError as exc:
     raw = _decode_response(exc, exc.read())
+    message = _extract_error_message(raw) or str(exc.reason)
     raise CodeAssistError(
-      f"Antigravity project context HTTP {exc.code}: {raw or exc.reason}",
+      redact_secret_text(f"Antigravity project context HTTP {exc.code}: {_limit_error_text(message)}"),
       code=f"antigravity_project_context_http_{exc.code}",
     ) from exc
   except urllib.error.URLError as exc:
     raise CodeAssistError(
-      f"Antigravity project context request failed: {exc}",
+      redact_secret_text(f"Antigravity project context request failed: {_limit_error_text(str(exc))}"),
       code="antigravity_project_context_network_error",
     ) from exc
+
+
+def _extract_error_message(raw: str) -> str:
+  try:
+    parsed = json.loads(raw)
+  except Exception:
+    return raw
+  if isinstance(parsed, dict):
+    error = parsed.get("error")
+    if isinstance(error, dict):
+      for key in ("message", "status", "code"):
+        value = error.get(key)
+        if value:
+          return str(value)
+    for key in ("message", "detail", "error"):
+      value = parsed.get(key)
+      if isinstance(value, str) and value:
+        return value
+  return raw
+
+
+def _limit_error_text(text: str, limit: int = 500) -> str:
+  if len(text) <= limit:
+    return text
+  return text[:limit] + "..."
 
 
 def _post_json(path: str, body: dict[str, Any], access_token: str, *, timeout: int = 30) -> dict[str, Any]:
