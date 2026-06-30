@@ -335,7 +335,7 @@ class TestFilterContentsThinking(unittest.TestCase):
     result = filter_contents_thinking(contents, is_claude=True)
     self.assertEqual(result[0]["parts"], [{"type": "text", "text": "hi"}])
 
-  def test_preserves_user_role(self):
+  def test_strips_user_role(self):
     contents = [
       {"role": "user", "parts": [
         {"type": "thinking", "thinking": "..."},
@@ -343,11 +343,17 @@ class TestFilterContentsThinking(unittest.TestCase):
       ]},
     ]
     result = filter_contents_thinking(contents, is_claude=True)
-    # User role thinking blocks should remain because only model/assistant stripped
-    self.assertEqual(result[0]["parts"], [
-      {"type": "thinking", "thinking": "..."},
-      {"text": "hi"},
-    ])
+    self.assertEqual(result[0]["parts"], [{"text": "hi"}])
+
+  def test_strips_roleless_entry(self):
+    contents = [
+      {"parts": [
+        {"type": "thinking", "thinking": "..."},
+        {"text": "hi"},
+      ]},
+    ]
+    result = filter_contents_thinking(contents, is_claude=True)
+    self.assertEqual(result[0]["parts"], [{"text": "hi"}])
 
   def test_preserves_all_when_not_claude(self):
     contents = [

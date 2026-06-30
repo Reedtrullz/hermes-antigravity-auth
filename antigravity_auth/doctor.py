@@ -10,7 +10,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .package_info import GIT_PACKAGE_SPEC, INSTALL_COMMAND, python_install_command
+from .package_info import (
+  GIT_PACKAGE_SPEC,
+  INSTALL_COMMAND,
+  PACKAGE_NAME,
+  __version__,
+  python_install_command,
+)
 from .redaction import redact_secret_text, redact_secrets
 from .storage import (
   _probe_process_file_lock,
@@ -62,6 +68,33 @@ def _check_entrypoint() -> DoctorRow:
     return _row("WARN", "plugin entrypoint", f"could not inspect entry points: {exc}", f"Verify package installation with {python_install_command('python')}.")
 
 
+def _check_package_metadata() -> DoctorRow:
+  try:
+    installed_version = importlib.metadata.version(PACKAGE_NAME)
+  except importlib.metadata.PackageNotFoundError:
+    return _row(
+      "INFO",
+      "package metadata",
+      "package metadata is not installed in this Python environment; using source version " + __version__,
+      f"Run {INSTALL_COMMAND} to install {GIT_PACKAGE_SPEC} into Hermes' Python.",
+    )
+  except Exception as exc:
+    return _row(
+      "WARN",
+      "package metadata",
+      f"could not inspect installed package metadata: {exc}",
+      f"Verify package installation with {python_install_command('python')}.",
+    )
+  if installed_version != __version__:
+    return _row(
+      "WARN",
+      "package metadata",
+      f"installed metadata version {installed_version} differs from source version {__version__}",
+      "Remove stale *.egg-info metadata or reinstall with hermes-antigravity-install.",
+    )
+  return _row("PASS", "package metadata", f"version {installed_version}")
+
+
 def _check_hermes_adapter() -> list[DoctorRow]:
   rows: list[DoctorRow] = []
   try:
@@ -78,11 +111,58 @@ def _check_hermes_adapter() -> list[DoctorRow]:
     else:
       rows.append(_row("PASS", "Hermes adapter symbols", "GeminiCloudCodeClient and wrap_code_assist_request exist"))
   except Exception as exc:
+    transport_ready = False
+    transport_detail = ""
+    transport_fix = ""
+    try:
+      native = importlib.import_module("agent.gemini_native_adapter")
+      native_missing = [
+        name for name in ("GeminiNativeClient", "build_gemini_request")
+        if not hasattr(native, name)
+      ]
+      if native_missing:
+        transport_detail = "; agent.gemini_native_adapter exists but is missing " + ", ".join(native_missing)
+      else:
+        transport_detail = (
+          "; agent.gemini_native_adapter is available, but it is the native "
+          "Gemini API-key transport, not the Cloud Code adapter"
+        )
+        try:
+          runtime_helpers = importlib.import_module("agent.agent_runtime_helpers")
+          from .cloudcode_client import AntigravityCloudCodeClient
+          if hasattr(runtime_helpers, "create_openai_client") and callable(AntigravityCloudCodeClient):
+            transport_ready = True
+            transport_detail = (
+              "; Hermes 0.17 client factory path is available for the local "
+              "Antigravity Cloud Code client"
+            )
+          else:
+            transport_fix = "Upgrade Hermes or reinstall hermes-antigravity-auth."
+        except Exception:
+          transport_fix = (
+            "Hermes 0.17+ appears to have removed the Cloud Code adapter. "
+            "Use a Hermes build with agent.gemini_cloudcode_adapter or enable "
+            "the Hermes 0.17 Antigravity client-factory transport."
+          )
+    except Exception:
+      pass
+    if transport_ready:
+      rows.append(_row(
+        "INFO",
+        "Hermes adapter import",
+        f"legacy agent.gemini_cloudcode_adapter is unavailable: {exc}{transport_detail}",
+      ))
+      rows.append(_row(
+        "PASS",
+        "Hermes 0.17 transport",
+        "agent.agent_runtime_helpers.create_openai_client can be patched for Antigravity Cloud Code routing",
+      ))
+      return rows
     rows.append(_row(
       "FAIL",
       "Hermes adapter import",
-      f"could not import agent.gemini_cloudcode_adapter: {exc}",
-      "Run inside the Hermes Agent environment or install a Hermes version with google-gemini-cli support.",
+      f"could not import agent.gemini_cloudcode_adapter: {exc}{transport_detail}",
+      transport_fix or "Run inside the Hermes Agent environment or install a Hermes version with google-gemini-cli Cloud Code support.",
     ))
   return rows
 
@@ -91,6 +171,9 @@ def _check_interceptor() -> DoctorRow:
   try:
     from . import interceptor
     if interceptor.is_installed():
+      health = interceptor.get_routing_health()
+      if health.get("hermes17_client_factory_patch_active"):
+        return _row("PASS", "interceptor", "Hermes 0.17 Antigravity client factory is installed in this process")
       return _row("PASS", "interceptor", "interceptor is installed in this process")
     adapter_error = ""
     try:
@@ -99,6 +182,9 @@ def _check_interceptor() -> DoctorRow:
         return _row("WARN", "interceptor", "interceptor is not installed yet, but Hermes symbols are importable", "Ensure the antigravity-cli plugin is enabled in ~/.hermes/config.yaml and restart Hermes.")
     except Exception as exc:
       adapter_error = f": {exc}"
+    health = interceptor.get_routing_health()
+    if health.get("hermes17_client_factory_available"):
+      return _row("WARN", "interceptor", "Hermes 0.17 client factory transport is available but not installed", "Ensure the antigravity provider plugin is enabled in ~/.hermes/config.yaml and restart Hermes.")
     return _row("FAIL", "interceptor", f"interceptor is not installed and Hermes adapter symbols are unavailable{adapter_error}", "Enable the plugin from within Hermes or install a compatible Hermes build.")
   except Exception as exc:
     return _row("FAIL", "interceptor", f"could not inspect interceptor: {exc}", "Reinstall hermes-antigravity-auth and rerun doctor.")
@@ -462,6 +548,7 @@ def _check_model_registry() -> DoctorRow:
 def run_doctor() -> list[DoctorRow]:
   rows: list[DoctorRow] = []
   rows.append(_check_entrypoint())
+  rows.append(_check_package_metadata())
   rows.extend(_check_hermes_adapter())
   rows.append(_check_interceptor())
   rows.extend(_check_routing_health())

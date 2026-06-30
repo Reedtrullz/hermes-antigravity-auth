@@ -190,6 +190,28 @@ class TestApplyClaudeTransforms(unittest.TestCase):
     self.assertEqual(inner["contents"][0]["parts"], [{"text": "visible"}])
     self.mock_get_config.assert_called_once()
 
+  def test_apply_claude_transforms_strips_user_and_roleless_thinking_parts(self):
+    inner = {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {"type": "thinking", "thinking": "stale user reasoning"},
+            {"text": "visible user text"},
+          ],
+        },
+        {
+          "parts": [
+            {"thought": True, "text": "stale roleless reasoning"},
+            {"text": "visible roleless text"},
+          ],
+        },
+      ],
+    }
+    _apply_claude_transforms(inner)
+    self.assertEqual(inner["contents"][0]["parts"], [{"text": "visible user text"}])
+    self.assertEqual(inner["contents"][1]["parts"], [{"text": "visible roleless text"}])
+
   def test_apply_claude_transforms_preserves_thinking_parts_when_configured(self):
     self.mock_get_config.return_value = SimpleNamespace(keep_thinking=True)
     inner = {

@@ -120,11 +120,51 @@ def detect_hermes_features() -> list[HermesFeature]:
   adapter, adapter_error = _import_module("agent.gemini_cloudcode_adapter")
   if adapter is None:
     rows.append(HermesFeature(
-      "WARN",
+      "INFO",
       "Hermes Cloud Code adapter internals",
       f"agent.gemini_cloudcode_adapter unavailable: {adapter_error}",
-      "Standalone provider fallback remains available; HTTP interceptor cannot install outside Hermes.",
+      "Expected on Hermes 0.17+ when the Antigravity client-factory transport is available.",
     ))
+    native_adapter, native_adapter_error = _import_module("agent.gemini_native_adapter")
+    if native_adapter is not None:
+      missing = _missing(native_adapter, ("GeminiNativeClient", "build_gemini_request"))
+      if missing:
+        rows.append(HermesFeature(
+          "WARN",
+          "Hermes native Gemini adapter internals",
+          "agent.gemini_native_adapter is available but missing " + ", ".join(missing),
+          "This is not a compatible replacement for the Cloud Code adapter.",
+        ))
+      else:
+        runtime_helpers, _ = _import_module("agent.agent_runtime_helpers")
+        try:
+          from .cloudcode_client import AntigravityCloudCodeClient
+          local_transport_ok = callable(AntigravityCloudCodeClient)
+        except Exception:
+          local_transport_ok = False
+        if (
+          runtime_helpers is not None
+          and hasattr(runtime_helpers, "create_openai_client")
+          and local_transport_ok
+        ):
+          rows.append(HermesFeature(
+            "PASS",
+            "Hermes 0.17 Antigravity transport internals",
+            "client factory and local Antigravity Cloud Code client are available",
+          ))
+        else:
+          rows.append(HermesFeature(
+            "WARN",
+            "Hermes native Gemini adapter internals",
+            "native Gemini adapter is available, but it is not the Cloud Code transport Antigravity patches",
+            "Enable the Hermes 0.17 Antigravity client-factory transport or use a Hermes build with Cloud Code support.",
+          ))
+    elif native_adapter_error is not None:
+      rows.append(HermesFeature(
+        "INFO",
+        "Hermes native Gemini adapter internals",
+        f"agent.gemini_native_adapter unavailable: {native_adapter_error}",
+      ))
   else:
     missing = _missing(adapter, ("GeminiCloudCodeClient", "wrap_code_assist_request"))
     if missing:

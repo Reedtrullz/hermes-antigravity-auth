@@ -196,11 +196,10 @@ def strip_thinking_blocks(contents: list[dict], is_claude: bool = True) -> list[
 
 
 def filter_contents_thinking(contents: list[dict], is_claude: bool) -> list[dict]:
-  """Filter thinking blocks from a contents array with role awareness.
+  """Filter thinking blocks from a contents array.
 
-  - If ``is_claude`` is ``True`` and the content entry has role ``"model"`` or
-    ``"assistant"``, thinking blocks are stripped from its parts/content array.
-  - Other roles (e.g. ``"user"``) are left unchanged.
+  - If ``is_claude`` is ``True``, thinking/signature-bearing blocks are stripped
+    from every parts/content array, regardless of role.
   - If ``is_claude`` is ``False``, all entries pass through unchanged.
   """
   if not is_claude:
@@ -212,20 +211,17 @@ def filter_contents_thinking(contents: list[dict], is_claude: bool) -> list[dict
       result.append(content)
       continue
 
-    role = content.get("role", "")
-    should_strip = role in ("model", "assistant")
-
     if isinstance(content.get("parts"), list):
       parts = content["parts"]
       result.append({
         **content,
-        "parts": strip_all_thinking_blocks(parts) if should_strip else parts,
+        "parts": strip_all_thinking_blocks(parts),
       })
     elif isinstance(content.get("content"), list):
       content_list = content["content"]
       result.append({
         **content,
-        "content": strip_all_thinking_blocks(content_list) if should_strip else content_list,
+        "content": strip_all_thinking_blocks(content_list),
       })
     else:
       result.append(content)

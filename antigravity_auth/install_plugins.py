@@ -207,9 +207,10 @@ def _pip_install_args(package_spec: str) -> list[str]:
 
 
 def install_package_in_hermes_python(hermes_python: Path, package_spec: str | None = None) -> bool:
-  target = hermes_python.resolve()
+  target = hermes_python.expanduser()
+  target_resolved = target.resolve()
   current = Path(sys.executable).resolve()
-  if target == current:
+  if target_resolved == current:
     return False
 
   spec = package_spec or _current_package_spec()

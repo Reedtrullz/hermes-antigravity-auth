@@ -66,6 +66,42 @@ class TestDoctor(unittest.TestCase):
         self.assertTrue(adapter_rows)
         self.assertEqual(adapter_rows[0].status, "FAIL")
 
+    def test_doctor_warns_when_package_metadata_version_drifts(self):
+        from antigravity_auth.doctor import _check_package_metadata
+
+        with patch("antigravity_auth.doctor.importlib.metadata.version", return_value="1.6.0"), \
+            patch("antigravity_auth.doctor.__version__", "1.7.0"):
+            row = _check_package_metadata()
+
+        self.assertEqual(row.status, "WARN")
+        self.assertEqual(row.check, "package metadata")
+        self.assertIn("1.6.0", row.detail)
+        self.assertIn("1.7.0", row.detail)
+        self.assertIn("egg-info", row.fix)
+
+    def test_doctor_explains_native_adapter_is_not_cloudcode_adapter(self):
+        import types
+        from antigravity_auth.doctor import _check_hermes_adapter
+
+        native = types.ModuleType("agent.gemini_native_adapter")
+        native.GeminiNativeClient = object
+        native.build_gemini_request = lambda **kwargs: kwargs
+
+        def fake_import(name):
+            if name == "agent.gemini_cloudcode_adapter":
+                raise ImportError("missing cloudcode adapter")
+            if name == "agent.gemini_native_adapter":
+                return native
+            return __import__(name)
+
+        with patch("antigravity_auth.doctor.importlib.import_module", side_effect=fake_import):
+            rows = _check_hermes_adapter()
+
+        self.assertEqual(rows[0].status, "FAIL")
+        self.assertIn("gemini_native_adapter", rows[0].detail)
+        self.assertIn("not the Cloud Code adapter", rows[0].detail)
+        self.assertIn("port", rows[0].fix.lower())
+
     def test_doctor_reports_retry_streaming_limitation_as_pass(self):
         from antigravity_auth.doctor import format_doctor_rows, run_doctor
 

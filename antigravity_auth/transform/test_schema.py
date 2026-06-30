@@ -97,7 +97,7 @@ class TestTryMergeEnumFromUnion(unittest.TestCase):
     result = _try_merge_enum_from_union(options)
     self.assertEqual(result, ["x", "y", "z"])
 
-  def returns_none_for_type_options(self):
+  def test_returns_none_for_type_options(self):
     options = [{"type": "string"}, {"type": "number"}]
     result = _try_merge_enum_from_union(options)
     self.assertIsNone(result)

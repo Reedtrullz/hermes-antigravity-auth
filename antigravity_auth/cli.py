@@ -1025,12 +1025,19 @@ def print_interceptor_status():
         installed = interceptor.is_installed()
         health = interceptor.get_routing_health()
         if installed:
-            print("  Status:    INSTALLED (headers + auth + request transformation active)")
+            if health.get("hermes17_client_factory_patch_active"):
+                print("  Status:    INSTALLED (Hermes 0.17 client factory transport active)")
+            else:
+                print("  Status:    INSTALLED (headers + auth + request transformation active)")
         else:
             print("  Status:    NOT INSTALLED")
             print("  Impact:    Claude models will NOT work through Antigravity")
             print("             (requests go through Code Assist which checks eligibility)")
         print(f"  Hook:      {'INSTALLED' if health.get('global_httpx_hook_installed') else 'NOT INSTALLED'}")
+        if health.get("hermes17_client_factory_patch_active"):
+            print("  Factory:   INSTALLED")
+        elif health.get("hermes17_client_factory_available"):
+            print("  Factory:   AVAILABLE (not installed in this process)")
         print(f"  Routing:   {str(health.get('status', 'unknown')).upper()} - {health.get('detail', '')}")
     except Exception as exc:
         print(f"  Status:    ERROR importing interceptor: {exc}")
@@ -1051,7 +1058,26 @@ def print_interceptor_status():
         adapter_ok = True
     except ImportError as exc:
         print(f"  Adapter:   NOT importable ({exc})")
-        print("  Impact:    Interceptor cannot install without the Hermes adapter")
+        try:
+            import agent.gemini_native_adapter as native_adapter
+            native_ok = all(
+                hasattr(native_adapter, name)
+                for name in ("GeminiNativeClient", "build_gemini_request")
+            )
+        except Exception:
+            native_ok = False
+        if native_ok:
+            print("  Native:    agent.gemini_native_adapter is available")
+            if health.get("hermes17_client_factory_patch_active"):
+                print("  Transport: Hermes 0.17 client factory routes Antigravity models")
+            elif health.get("hermes17_client_factory_available"):
+                print("  Transport: Hermes 0.17 client factory transport is available")
+                print("  Impact:    Enable/restart the provider plugin to install it")
+            else:
+                print("  Impact:    Hermes exposes the native Gemini API-key transport,")
+                print("             which is not the Cloud Code adapter Antigravity patches")
+        else:
+            print("  Impact:    Interceptor cannot install without the Hermes adapter")
         adapter_ok = False
     except Exception as exc:
         print(f"  Adapter:   Error: {exc}")

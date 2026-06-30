@@ -8,6 +8,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import httpx
@@ -1191,6 +1192,127 @@ class TestInstallProjectContextPatch(unittest.TestCase):
 
 class TestRoutingHealth(unittest.TestCase):
 
+    def test_install_does_not_global_patch_when_cloudcode_adapter_is_missing(self):
+        from unittest.mock import patch
+        import antigravity_auth.interceptor as interceptor
+
+        original = (
+            interceptor._PATCHED,
+            interceptor._HERMES17_FACTORY_PATCHED,
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED,
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST,
+        )
+        try:
+            interceptor._PATCHED = False
+            interceptor._HERMES17_FACTORY_PATCHED = False
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = False
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
+            with patch.dict(sys.modules, {
+                "agent": None,
+                "agent.gemini_cloudcode_adapter": None,
+                "agent.agent_runtime_helpers": None,
+            }), patch("antigravity_auth.interceptor._install_global_httpx_hook") as install_hook:
+                self.assertFalse(interceptor.install())
+
+            install_hook.assert_not_called()
+            self.assertFalse(interceptor._GLOBAL_HTTPX_HOOK_INSTALLED)
+        finally:
+            interceptor._PATCHED = original[0]
+            interceptor._HERMES17_FACTORY_PATCHED = original[1]
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[2]
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = original[3]
+
+    def test_install_does_not_global_patch_when_cloudcode_adapter_already_patched(self):
+        from unittest.mock import patch
+        import antigravity_auth.interceptor as interceptor
+
+        def _patched_init(self):
+            pass
+
+        class FakeGeminiCloudCodeClient:
+            __init__ = _patched_init
+
+        fake_gca = types.ModuleType("agent.gemini_cloudcode_adapter")
+        fake_gca.GeminiCloudCodeClient = FakeGeminiCloudCodeClient
+        fake_gca.wrap_code_assist_request = lambda **kwargs: kwargs
+        fake_agent = types.ModuleType("agent")
+        fake_agent.gemini_cloudcode_adapter = fake_gca
+
+        original = (
+            interceptor._PATCHED,
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED,
+            interceptor._ORIGINAL_INIT,
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT,
+        )
+        try:
+            interceptor._PATCHED = False
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = False
+            interceptor._ORIGINAL_INIT = None
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+            with patch.dict(sys.modules, {
+                "agent": fake_agent,
+                "agent.gemini_cloudcode_adapter": fake_gca,
+            }), patch("antigravity_auth.interceptor._install_global_httpx_hook") as install_hook:
+                self.assertFalse(interceptor.install())
+
+            install_hook.assert_not_called()
+            self.assertFalse(interceptor._GLOBAL_HTTPX_HOOK_INSTALLED)
+            self.assertIsNone(interceptor._ORIGINAL_INIT)
+            self.assertIsNone(interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT)
+        finally:
+            interceptor._PATCHED = original[0]
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]
+            interceptor._ORIGINAL_INIT = original[2]
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = original[3]
+
+    def test_install_patches_hermes17_client_factory_when_cloudcode_adapter_is_missing(self):
+        import antigravity_auth.interceptor as interceptor
+        from antigravity_auth.cloudcode_client import AntigravityCloudCodeClient
+
+        def original_factory(agent, client_kwargs, *, reason, shared):
+            return ("original", agent, client_kwargs, reason, shared)
+
+        fake_runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+        fake_runtime_helpers.create_openai_client = original_factory
+        fake_agent_module = types.ModuleType("agent")
+        fake_agent_module.__path__ = []
+        fake_agent_module.agent_runtime_helpers = fake_runtime_helpers
+
+        original = (
+            interceptor._PATCHED,
+            interceptor._HERMES17_FACTORY_PATCHED,
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT,
+            interceptor._RUNTIME_PROVIDER_PATCHED,
+            interceptor._AUXILIARY_CLIENT_PATCHED,
+        )
+        try:
+            interceptor._PATCHED = False
+            interceptor._HERMES17_FACTORY_PATCHED = False
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT = None
+            interceptor._RUNTIME_PROVIDER_PATCHED = False
+            interceptor._AUXILIARY_CLIENT_PATCHED = False
+            with patch.dict(sys.modules, {
+                "agent": fake_agent_module,
+                "agent.gemini_cloudcode_adapter": None,
+                "agent.agent_runtime_helpers": fake_runtime_helpers,
+            }):
+                self.assertTrue(interceptor.install())
+                client = fake_runtime_helpers.create_openai_client(
+                    SimpleNamespace(provider="google-gemini-cli"),
+                    {"base_url": "cloudcode-pa://google", "api_key": "ignored"},
+                    reason="test",
+                    shared=True,
+                )
+
+            self.assertIsInstance(client, AntigravityCloudCodeClient)
+        finally:
+            interceptor._PATCHED = original[0]
+            interceptor._HERMES17_FACTORY_PATCHED = original[1]
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT = original[2]
+            interceptor._RUNTIME_PROVIDER_PATCHED = original[3]
+            interceptor._AUXILIARY_CLIENT_PATCHED = original[4]
+            fake_runtime_helpers.create_openai_client = original_factory
+
     def test_routing_health_ready_when_interceptor_and_adapter_are_patched(self):
         from unittest.mock import patch
         import antigravity_auth.interceptor as interceptor
@@ -1242,12 +1364,47 @@ class TestRoutingHealth(unittest.TestCase):
             with patch.dict(sys.modules, {
                 "agent": None,
                 "agent.gemini_cloudcode_adapter": None,
+                "agent.gemini_native_adapter": None,
             }):
                 health = interceptor.get_routing_health()
 
             self.assertEqual(health["status"], "blocked")
             self.assertFalse(health["claude_routing_ready"])
             self.assertIn("Cloud Code adapter", health["detail"])
+        finally:
+            interceptor._PATCHED = original[0]
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = original[2]
+
+    def test_routing_health_explains_native_adapter_is_not_compatible(self):
+        import antigravity_auth.interceptor as interceptor
+
+        native = types.ModuleType("agent.gemini_native_adapter")
+        native.GeminiNativeClient = object
+        native.build_gemini_request = lambda **kwargs: kwargs
+        agent = types.ModuleType("agent")
+        agent.gemini_native_adapter = native
+
+        original = (
+            interceptor._PATCHED,
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED,
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST,
+        )
+        try:
+            interceptor._PATCHED = False
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = False
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
+            with patch.dict(sys.modules, {
+                "agent": agent,
+                "agent.gemini_cloudcode_adapter": None,
+                "agent.gemini_native_adapter": native,
+            }):
+                health = interceptor.get_routing_health()
+
+            self.assertEqual(health["status"], "blocked")
+            self.assertTrue(health["native_gemini_adapter_importable"])
+            self.assertIn("not the Cloud Code/Antigravity transport", health["detail"])
+            self.assertIn("port", health["fix"].lower())
         finally:
             interceptor._PATCHED = original[0]
             interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]

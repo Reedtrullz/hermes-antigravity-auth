@@ -16,6 +16,7 @@ class TestHermesCompat(unittest.TestCase):
       "hermes_cli.auth": None,
       "agent": None,
       "agent.gemini_cloudcode_adapter": None,
+      "agent.gemini_native_adapter": None,
     }):
       rows = detect_hermes_features()
 
@@ -72,6 +73,24 @@ class TestHermesCompat(unittest.TestCase):
     self.assertIn(("Hermes provider alias internals", "PASS"), checks)
     self.assertIn(("Hermes auth registry internals", "PASS"), checks)
     self.assertIn(("Hermes Cloud Code adapter internals", "PASS"), checks)
+
+  def test_detect_explains_native_adapter_is_not_cloudcode_adapter(self):
+    from antigravity_auth.hermes_compat import detect_hermes_features
+
+    native = types.ModuleType("agent.gemini_native_adapter")
+    native.GeminiNativeClient = object
+    native.build_gemini_request = lambda **kwargs: kwargs
+
+    with patch.dict(sys.modules, {
+      "agent.gemini_cloudcode_adapter": None,
+      "agent.gemini_native_adapter": native,
+    }):
+      rows = detect_hermes_features()
+
+    matching = [row for row in rows if row.check == "Hermes native Gemini adapter internals"]
+    self.assertTrue(matching)
+    self.assertEqual(matching[0].status, "WARN")
+    self.assertIn("not the Cloud Code transport", matching[0].detail)
 
   def test_model_picker_feature_helper_reports_missing_private_symbols(self):
     from antigravity_auth.hermes_compat import has_required_model_picker_features

@@ -173,6 +173,45 @@ class TestHermesPluginRegister(unittest.TestCase):
     self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
     self.assertIn("gemini-3.5-flash-high", fake_models._PROVIDER_MODELS["google-gemini-cli"])
 
+  def test_provider_plugin_handles_three_tuple_provider_groups(self):
+    from collections import namedtuple
+
+    import antigravity_auth.hermes_provider_plugin as provider_mod
+
+    ProviderEntry = namedtuple("ProviderEntry", "slug label tui_desc")
+    fake_models = types.ModuleType("hermes_cli.models")
+    fake_models.ProviderEntry = ProviderEntry
+    fake_models._PROVIDER_MODELS = {"google-gemini-cli": ["old-model"]}
+    fake_models._PROVIDER_LABELS = {"google-gemini-cli": "Google Gemini (OAuth)"}
+    fake_models._PROVIDER_ALIASES = {}
+    fake_models.CANONICAL_PROVIDERS = [
+      ProviderEntry("gemini", "Google AI Studio", "Google AI Studio"),
+      ProviderEntry("google-gemini-cli", "Google Gemini (OAuth)", "Google Gemini via OAuth"),
+    ]
+    fake_models.PROVIDER_GROUPS = {
+      "google": ("Google Gemini", "Google AI Studio (API key)", ["gemini", "google-gemini-cli"]),
+    }
+    fake_models._SLUG_TO_GROUP = {
+      "gemini": "google",
+      "google-gemini-cli": "google",
+    }
+
+    fake_hermes_cli = types.ModuleType("hermes_cli")
+    fake_hermes_cli.models = fake_models
+
+    with patch.dict(sys.modules, {
+        "hermes_cli": fake_hermes_cli,
+        "hermes_cli.models": fake_models,
+    }), \
+        patch.object(provider_mod, "_set_oauth_env_from_credentials"):
+      provider_mod._patch_hermes_model_picker()
+
+    self.assertEqual(
+      fake_models.PROVIDER_GROUPS["google"],
+      ("Google Gemini", "Google AI Studio (API key)", ["gemini"]),
+    )
+    self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
+
   def test_provider_plugin_skips_picker_patch_when_private_symbols_missing(self):
     import antigravity_auth.hermes_provider_plugin as provider_mod
 
@@ -393,3 +432,36 @@ class TestHermesPluginRegister(unittest.TestCase):
     output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
     self.assertIn("Claude models require", output)
     self.assertIn("Claude routing: BLOCKED", output)
+
+  def test_interceptor_status_explains_native_adapter_mismatch(self):
+    import sys
+    import types
+    from unittest.mock import patch
+
+    from antigravity_auth.cli import print_interceptor_status
+
+    native = types.ModuleType("agent.gemini_native_adapter")
+    native.GeminiNativeClient = object
+    native.build_gemini_request = lambda **kwargs: kwargs
+    agent = types.ModuleType("agent")
+    agent.gemini_native_adapter = native
+
+    with patch("antigravity_auth.interceptor.is_installed", return_value=False), \
+         patch("antigravity_auth.interceptor.get_routing_health", return_value={
+           "status": "blocked",
+           "detail": "native adapter is not cloudcode",
+           "fix": "port the plugin",
+           "global_httpx_hook_installed": False,
+           "claude_routing_ready": False,
+         }), \
+         patch.dict(sys.modules, {
+           "agent": agent,
+           "agent.gemini_cloudcode_adapter": None,
+           "agent.gemini_native_adapter": native,
+         }), \
+         patch("builtins.print") as mock_print:
+      print_interceptor_status()
+
+    output = " ".join(str(call.args[0]) for call in mock_print.call_args_list if call.args)
+    self.assertIn("agent.gemini_native_adapter is available", output)
+    self.assertIn("not the Cloud Code adapter", output)

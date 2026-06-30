@@ -262,13 +262,31 @@ class TestHermesMigrationIntegration(unittest.TestCase):
 
             self.assertTrue(installed)
             run.assert_called_once_with([
-                str(python.resolve()),
+                str(python),
                 "-m",
                 "pip",
                 "install",
                 "--upgrade",
                 "example-package",
             ], check=True)
+
+    def test_install_package_preserves_venv_python_symlink_path(self):
+        from antigravity_auth.install_plugins import install_package_in_hermes_python
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            base_python = root / "uv-python" / "bin" / "python3.11"
+            venv_python = root / "hermes-agent" / "venv" / "bin" / "python3"
+            base_python.parent.mkdir(parents=True)
+            venv_python.parent.mkdir(parents=True)
+            base_python.write_text("", encoding="utf-8")
+            venv_python.symlink_to(base_python)
+
+            with patch("antigravity_auth.install_plugins.subprocess.run") as run:
+                installed = install_package_in_hermes_python(venv_python, "example-package")
+
+            self.assertTrue(installed)
+            self.assertEqual(run.call_args.args[0][0], str(venv_python))
 
 
 if __name__ == "__main__":
