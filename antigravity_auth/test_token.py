@@ -196,6 +196,28 @@ class TestToken(unittest.TestCase):
         self.assertEqual(active["refresh_token"], "new_rotated_refresh_token_xyz|proj_abc")
 
     @patch("urllib.request.urlopen")
+    def test_refresh_access_token_defaults_malformed_expires_in(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = json.dumps({
+            "access_token": "new_access_token_abc",
+            "expires_in": "not-a-number",
+            "refresh_token": "new_rotated_refresh_token_xyz",
+        }).encode("utf-8")
+        mock_urlopen.return_value.__enter__.return_value = mock_response
+
+        before = int(time.time() * 1000)
+        updated_auth = refresh_access_token({
+            "refresh": "old_refresh_123|proj_abc",
+            "access": "old_access",
+            "expires": 0,
+            "email": "test@example.com",
+        })
+
+        self.assertEqual(updated_auth["access"], "new_access_token_abc")
+        self.assertGreaterEqual(updated_auth["expires"], before + 3599 * 1000)
+
+    @patch("urllib.request.urlopen")
     def test_stale_concurrent_refresh_does_not_overwrite_rotated_refresh(self, mock_urlopen):
         response = MagicMock()
         response.status = 200

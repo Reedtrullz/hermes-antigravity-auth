@@ -315,6 +315,18 @@ def is_access_token_expired(auth: dict, buffer_seconds: int = 60) -> bool:
     return expires <= current_ms + buffer_ms
 
 
+def _calculate_token_expiry(request_time_ms: int, expires_in_seconds) -> int:
+    try:
+        seconds = int(expires_in_seconds)
+    except (ValueError, TypeError):
+        seconds = 3600
+
+    if seconds <= 0:
+        return request_time_ms
+
+    return request_time_ms + seconds * 1000
+
+
 def parse_oauth_error_payload(text: str | None) -> dict[str, str | None]:
     if not text:
         return {}
@@ -434,7 +446,7 @@ def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool 
         )
         
     expires_in = payload.get("expires_in") or 3600
-    expires_ms = start_time_ms + int(expires_in) * 1000
+    expires_ms = _calculate_token_expiry(start_time_ms, expires_in)
     
     new_raw_refresh = str(payload.get("refresh_token") or parts["refreshToken"])
     refreshed_parts = {

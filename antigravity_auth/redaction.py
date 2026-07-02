@@ -51,7 +51,7 @@ _PYTHON_REPR_SECRET_RE = re.compile(
   r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie)'\s*:\s*')[^']*(')"
 )
 _FORM_SECRET_RE = re.compile(
-  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key|cookie|set-cookie|set_cookie|setCookie)=([^&\s]+)"
+  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|authorization|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key|cookie|set-cookie|set_cookie|setCookie)=([^&\s]+)"
 )
 _HEADER_SECRET_RE = re.compile(
   r"(?i)(\b(?:authorization|x-api-key|x-goog-api-key|api-key|cookie|set-cookie)\s*:\s*)[^\r\n]+"

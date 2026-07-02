@@ -139,6 +139,14 @@ class TestApiKeyRedaction(unittest.TestCase):
         self.assertNotIn("inline-secret", rendered)
         self.assertIn("X-Goog-Api-Key: [REDACTED]", rendered)
 
+    def test_inline_authorization_assignment_is_redacted(self):
+        from antigravity_auth.redaction import redact_secret_text
+
+        rendered = redact_secret_text("request failed: authorization=raw-inline-secret")
+
+        self.assertNotIn("raw-inline-secret", rendered)
+        self.assertIn("authorization=[REDACTED]", rendered)
+
 
 class TestCookieRedaction(unittest.TestCase):
     def test_cookie_headers_are_redacted_in_structured_data(self):

@@ -667,7 +667,10 @@ def extract_retry_info(body: dict[str, Any]) -> dict[str, Any] | None:
 
     match = re.match(r"^([\d.]+)s$", retry_delay)
     if match:
-      seconds = float(match.group(1))
+      try:
+        seconds = float(match.group(1))
+      except ValueError:
+        continue
       if seconds > 0:
         return {"retryDelayMs": int(seconds * 1000)}
 

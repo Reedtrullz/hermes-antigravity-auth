@@ -228,6 +228,21 @@ class TestExtractRetryInfo(unittest.TestCase):
         result = extract_retry_info(body)
         self.assertIsNone(result)
 
+    def test_none_for_malformed_decimal_retry_delay(self):
+        """Returns None for retryDelay values that match loosely but cannot parse."""
+        body = {
+            "error": {
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+                        "retryDelay": "1.2.3s",
+                    }
+                ],
+            }
+        }
+        result = extract_retry_info(body)
+        self.assertIsNone(result)
+
     def test_skips_non_dict_details(self):
         """Skips non-dict items in details list."""
         body = {
