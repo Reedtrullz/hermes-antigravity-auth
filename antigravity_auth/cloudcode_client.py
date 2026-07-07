@@ -64,7 +64,11 @@ def _wrap_antigravity_http_client(client: httpx.Client) -> httpx.Client:
     from .interceptor import _wrap_http_client
 
     return _wrap_http_client(client)
-  except Exception:
+  except Exception as exc:
+    logger.warning(
+      "Could not wrap Antigravity HTTP client; requests may miss auth hooks: %s",
+      exc,
+    )
     return client
 
 
@@ -169,6 +173,12 @@ class AntigravityCloudCodeClient:
       return normalized
     return select_endpoint()
 
+  def _endpoint_for_request(self) -> str:
+    if str(self.base_url or "").strip().lower().startswith(("http://", "https://")):
+      return self._endpoint
+    self._endpoint = self._resolve_endpoint(self.base_url)
+    return self._endpoint
+
   def close(self) -> None:
     self.is_closed = True
     try:
@@ -239,7 +249,7 @@ class AntigravityCloudCodeClient:
     if stream:
       return self._stream_completion(native, model=model, envelope=envelope, timeout=timeout)
 
-    url = build_antigravity_url(self._endpoint, model, action="generateContent", streaming=False)
+    url = build_antigravity_url(self._endpoint_for_request(), model, action="generateContent", streaming=False)
     response = self._http.post(
       url,
       json=envelope,
@@ -264,7 +274,7 @@ class AntigravityCloudCodeClient:
     envelope: dict[str, Any],
     timeout: Any = None,
   ) -> Iterator[Any]:
-    url = build_antigravity_url(self._endpoint, model, action="streamGenerateContent", streaming=True)
+    url = build_antigravity_url(self._endpoint_for_request(), model, action="streamGenerateContent", streaming=True)
 
     def _generator() -> Iterator[Any]:
       try:
@@ -306,13 +316,28 @@ class AsyncAntigravityCloudCodeClient:
       return result
 
     async def _async_stream() -> Any:
-      while True:
-        done, chunk = await asyncio.to_thread(self._sync._advance_stream_iterator, result)
-        if done:
-          break
-        yield chunk
+      try:
+        while True:
+          done, chunk = await asyncio.to_thread(self._sync._advance_stream_iterator, result)
+          if done:
+            break
+          yield chunk
+      finally:
+        close = getattr(result, "close", None)
+        if callable(close):
+          await asyncio.to_thread(close)
 
     return _async_stream()
 
   async def close(self) -> None:
     await asyncio.to_thread(self._sync.close)
+
+  @property
+  def is_closed(self) -> bool:
+    return bool(getattr(self._sync, "is_closed", False))
+
+  async def __aenter__(self) -> "AsyncAntigravityCloudCodeClient":
+    return self
+
+  async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+    await self.close()

@@ -13,6 +13,9 @@ from unittest.mock import patch
 
 import httpx
 
+import antigravity_auth.cloudcode_client  # noqa: F401  pre-import: avoid patch.dict(sys.modules) eviction
+import antigravity_auth.hermes_compat  # noqa: F401
+
 
 class TestTracePermissions(unittest.TestCase):
     """Trace directory and files must use private permissions."""
@@ -1254,6 +1257,37 @@ class TestRoutingHealth(unittest.TestCase):
             interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]
             interceptor._ORIGINAL_WRAP_CODE_ASSIST = original[2]
 
+    def test_routing_health_blocks_modern_patch_without_native_adapter_symbols(self):
+        import antigravity_auth.interceptor as interceptor
+
+        original = (
+            interceptor._PATCHED,
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED,
+            interceptor._MODERN_RUNTIME_PATCHED,
+        )
+        try:
+            interceptor._PATCHED = True
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = True
+            interceptor._MODERN_RUNTIME_PATCHED = True
+            with patch("antigravity_auth.hermes_compat.has_modern_runtime_features", return_value=False), patch(
+                "antigravity_auth.hermes_compat.modern_runtime_feature_gaps",
+                return_value=["agent.gemini_native_adapter.gemini_http_error"],
+            ):
+                health = interceptor.get_routing_health()
+
+            self.assertEqual(health["status"], "blocked")
+            self.assertFalse(health["claude_routing_ready"])
+            self.assertFalse(health["modern_runtime_features_available"])
+            self.assertIn("agent.gemini_native_adapter.gemini_http_error", health["detail"])
+            self.assertIn(
+                "agent.gemini_native_adapter.gemini_http_error",
+                health["modern_runtime_missing_symbols"],
+            )
+        finally:
+            interceptor._PATCHED = original[0]
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]
+            interceptor._MODERN_RUNTIME_PATCHED = original[2]
+
     def test_install_patches_modern_hermes_factory_when_cloudcode_adapter_is_missing(self):
         import antigravity_auth.interceptor as interceptor
 
@@ -1262,8 +1296,10 @@ class TestRoutingHealth(unittest.TestCase):
         auxiliary_client = types.ModuleType("agent.auxiliary_client")
 
         original_client = object()
+        forwarded_create_kwargs = {}
 
-        def original_create(agent, client_kwargs, *, reason, shared):
+        def original_create(agent, client_kwargs, *, reason, shared, **kwargs):
+            forwarded_create_kwargs.update(kwargs)
             return original_client
 
         def original_runtime(**kwargs):
@@ -1275,6 +1311,12 @@ class TestRoutingHealth(unittest.TestCase):
         agent_runtime_helpers.create_openai_client = original_create
         runtime_provider.resolve_runtime_provider = original_runtime
         auxiliary_client.resolve_provider_client = original_aux
+        native_adapter = types.ModuleType("agent.gemini_native_adapter")
+        native_adapter.build_gemini_request = lambda **kwargs: {}
+        native_adapter.translate_gemini_response = lambda payload, model: payload
+        native_adapter.translate_stream_event = lambda event, model, tool_call_indices: []
+        native_adapter._iter_sse_events = lambda response: iter(())
+        native_adapter.gemini_http_error = lambda response, body_text="": RuntimeError(body_text)
 
         fake_agent_pkg = types.ModuleType("agent")
         fake_hermes_cli = types.ModuleType("hermes_cli")
@@ -1306,14 +1348,16 @@ class TestRoutingHealth(unittest.TestCase):
             def mark_global_hook_installed():
                 interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = True
 
-            with patch.dict(sys.modules, {
+            hermes_modules = {
                 "agent": fake_agent_pkg,
                 "agent.gemini_cloudcode_adapter": None,
                 "agent.agent_runtime_helpers": agent_runtime_helpers,
                 "agent.auxiliary_client": auxiliary_client,
+                "agent.gemini_native_adapter": native_adapter,
                 "hermes_cli": fake_hermes_cli,
                 "hermes_cli.runtime_provider": runtime_provider,
-            }), patch(
+            }
+            with patch.dict(sys.modules, hermes_modules), patch(
                 "antigravity_auth.interceptor._install_global_httpx_hook",
                 side_effect=mark_global_hook_installed,
             ):
@@ -1332,9 +1376,11 @@ class TestRoutingHealth(unittest.TestCase):
                     {"api_key": "key", "base_url": "https://openrouter.ai/api/v1"},
                     reason="test",
                     shared=False,
+                    future_flag="preserved",
                 ),
                 original_client,
             )
+            self.assertEqual(forwarded_create_kwargs, {"future_flag": "preserved"})
             runtime = runtime_provider.resolve_runtime_provider(requested="antigravity")
             self.assertEqual(runtime["provider"], "google-gemini-cli")
             self.assertEqual(runtime["base_url"], "cloudcode-pa://google")
@@ -1351,13 +1397,83 @@ class TestRoutingHealth(unittest.TestCase):
             )
             self.assertEqual(type(async_client).__name__, "AsyncAntigravityCloudCodeClient")
             self.assertEqual(async_model, "gemini-3.5-flash")
-            health = interceptor.get_routing_health()
+            with patch.dict(sys.modules, hermes_modules):
+                health = interceptor.get_routing_health()
             self.assertEqual(health["status"], "ready")
             self.assertTrue(health["modern_factory_transport_patched"])
             client.close()
             aux_client.close()
             asyncio.run(async_client.close())
-            self.assertTrue(interceptor.uninstall())
+            with patch.dict(sys.modules, hermes_modules):
+                self.assertTrue(interceptor.uninstall())
+        finally:
+            interceptor._PATCHED = original_state[0]
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original_state[1]
+            interceptor._ORIGINAL_INIT = original_state[2]
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = original_state[3]
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = original_state[4]
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT = original_state[5]
+            interceptor._ORIGINAL_RESOLVE_RUNTIME_PROVIDER = original_state[6]
+            interceptor._ORIGINAL_RESOLVE_PROVIDER_CLIENT = original_state[7]
+            interceptor._MODERN_RUNTIME_PATCHED = original_state[8]
+
+    def test_install_refuses_modern_factory_without_native_adapter_symbols(self):
+        import antigravity_auth.interceptor as interceptor
+
+        agent_runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+        runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+        auxiliary_client = types.ModuleType("agent.auxiliary_client")
+        native_adapter = types.ModuleType("agent.gemini_native_adapter")
+
+        agent_runtime_helpers.create_openai_client = lambda *args, **kwargs: object()
+        runtime_provider.resolve_runtime_provider = lambda *args, **kwargs: {}
+        auxiliary_client.resolve_provider_client = lambda *args, **kwargs: (None, None)
+        native_adapter.build_gemini_request = lambda **kwargs: {}
+        native_adapter.translate_gemini_response = lambda payload, model: payload
+        native_adapter.translate_stream_event = lambda event, model, tool_call_indices: []
+        native_adapter._iter_sse_events = lambda response: iter(())
+
+        original_state = (
+            interceptor._PATCHED,
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED,
+            interceptor._ORIGINAL_INIT,
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST,
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT,
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT,
+            interceptor._ORIGINAL_RESOLVE_RUNTIME_PROVIDER,
+            interceptor._ORIGINAL_RESOLVE_PROVIDER_CLIENT,
+            interceptor._MODERN_RUNTIME_PATCHED,
+        )
+        interceptor._PATCHED = False
+        interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = False
+        interceptor._ORIGINAL_INIT = None
+        interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
+        interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+        interceptor._ORIGINAL_CREATE_OPENAI_CLIENT = None
+        interceptor._ORIGINAL_RESOLVE_RUNTIME_PROVIDER = None
+        interceptor._ORIGINAL_RESOLVE_PROVIDER_CLIENT = None
+        interceptor._MODERN_RUNTIME_PATCHED = False
+
+        try:
+            def mark_global_hook_installed():
+                interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = True
+
+            with patch.dict(sys.modules, {
+                "agent": types.ModuleType("agent"),
+                "agent.gemini_cloudcode_adapter": None,
+                "agent.agent_runtime_helpers": agent_runtime_helpers,
+                "agent.auxiliary_client": auxiliary_client,
+                "agent.gemini_native_adapter": native_adapter,
+                "hermes_cli": types.ModuleType("hermes_cli"),
+                "hermes_cli.runtime_provider": runtime_provider,
+            }), patch(
+                "antigravity_auth.interceptor._install_global_httpx_hook",
+                side_effect=mark_global_hook_installed,
+            ):
+                self.assertFalse(interceptor.install())
+
+            self.assertFalse(interceptor._MODERN_RUNTIME_PATCHED)
+            self.assertFalse(interceptor._PATCHED)
         finally:
             interceptor._PATCHED = original_state[0]
             interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original_state[1]
