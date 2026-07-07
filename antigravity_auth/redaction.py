@@ -24,6 +24,11 @@ _SECRET_KEY_FRAGMENTS = (
   "sessiontoken",
   "api_key",
   "apikey",
+  "api_token",
+  "apitoken",
+  "cookie",
+  "set_cookie",
+  "setcookie",
 )
 
 _EXACT_SECRET_KEYS = {
@@ -32,23 +37,28 @@ _EXACT_SECRET_KEYS = {
   "token",
   "secret",
   "code",
+  "cookie",
+  "set_cookie",
+  "setcookie",
+  "credential",
+  "password",
 }
 
 _BEARER_RE = re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
 _QUERY_SECRET_RE = re.compile(
-  r"(?i)([?&](?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code|code_verifier|codeVerifier|session_token|sessionToken|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key)=)[^&#\s]+"
+  r"(?i)([?&](?:access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code|code_verifier|codeVerifier|session_token|sessionToken|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie|key)=)[^&#\s]+"
 )
 _JSON_SECRET_RE = re.compile(
-  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)"\s*:\s*")[^"]*(")'
+  r'(?i)("(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie)"\s*:\s*")[^"]*(")'
 )
 _PYTHON_REPR_SECRET_RE = re.compile(
-  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key)'\s*:\s*')[^']*(')"
+  r"(?i)('(?:access_token|refresh_token|id_token|accessToken|refreshToken|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|oauth_code|oauthCode|authorization|refresh|access|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie)'\s*:\s*')[^']*(')"
 )
 _FORM_SECRET_RE = re.compile(
-  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|key)=([^&\s]+)"
+  r"(?i)\b(access_token|accessToken|refresh_token|refreshToken|id_token|idToken|client_secret|clientSecret|code_verifier|codeVerifier|session_token|sessionToken|authorization|code|api_key|apiKey|apikey|x-api-key|x-goog-api-key|cookie|set-cookie|set_cookie|setCookie|key)=([^&\s]+)"
 )
 _HEADER_SECRET_RE = re.compile(
-  r"(?im)^(\s*(?:authorization|x-api-key|x-goog-api-key|api-key)\s*:\s*)[^\r\n]+"
+  r"(?im)(^|[ \t])((?:authorization|proxy-authorization|cookie|set-cookie|[\w-]*(?:api[-_]?key|api[-_]?token|token|secret|credential|password)[\w-]*)\s*:\s*)[^\r\n]+"
 )
 
 
@@ -71,7 +81,7 @@ def redact_secret_text(text: str) -> str:
   if not text:
     return text
   redacted = _BEARER_RE.sub("Bearer " + REDACTED, text)
-  redacted = _HEADER_SECRET_RE.sub(lambda m: m.group(1) + REDACTED, redacted)
+  redacted = _HEADER_SECRET_RE.sub(lambda m: m.group(1) + m.group(2) + REDACTED, redacted)
   redacted = _QUERY_SECRET_RE.sub(lambda m: m.group(1) + REDACTED, redacted)
   redacted = _JSON_SECRET_RE.sub(lambda m: m.group(1) + REDACTED + m.group(2), redacted)
   redacted = _PYTHON_REPR_SECRET_RE.sub(lambda m: m.group(1) + REDACTED + m.group(2), redacted)

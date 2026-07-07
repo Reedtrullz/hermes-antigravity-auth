@@ -1,6 +1,6 @@
 # Architecture Guide
 
-**Last Updated:** May 2026
+**Last Updated:** July 2026
 
 This document describes the Hermes Agent Python implementation for Google Antigravity OAuth, account management, request transformation, HTTP interception, and CLI integration.
 
@@ -13,12 +13,13 @@ Hermes Agent
   ├─ antigravity-cli plugin: hermes antigravity ...
   ├─ provider aliases: antigravity / antigravity-google / ag / gemini-cli / gemini-oauth
   ├─ Hermes Cloud Code runtime: google-gemini-cli
-  ├─ wrap_code_assist_request patch: Claude body hardening before envelope wrapping
+  ├─ Hermes v0.18 factory transport patch: OpenAI-shaped Antigravity Cloud Code client
+  ├─ legacy adapter patch: Claude body hardening before envelope wrapping
   ├─ httpx event hooks: headers, account selection, token/account rotation
   └─ Antigravity auth package: OAuth, storage, accounts, transforms, watchdog
 ```
 
-The plugin authenticates Google accounts, stores Antigravity account state under `HERMES_HOME`, and registers Antigravity provider aliases that route through Hermes' native `google-gemini-cli` Cloud Code transport. It does not route through OpenRouter. On plugin load, `interceptor.py` patches `GeminiCloudCodeClient.__init__` to attach httpx request/response event hooks, and patches Hermes' `wrap_code_assist_request` helper so Claude-specific body transforms run before the native Cloud Code envelope is built. The request hook is primarily for header injection, account selection, and token sync; response handling covers token refresh and model-family/header-style-aware account rotation. A background watchdog thread proactively refreshes tokens before expiry.
+The plugin authenticates Google accounts, stores Antigravity account state under `HERMES_HOME`, and registers Antigravity provider aliases that route through the canonical `google-gemini-cli` Cloud Code provider. It does not route through OpenRouter. On Hermes v0.18+, where `agent.gemini_cloudcode_adapter` may no longer exist, `interceptor.py` patches the modern runtime factory/resolver hooks and supplies an OpenAI-shaped Antigravity Cloud Code client. On older Hermes builds, it patches `GeminiCloudCodeClient.__init__` to attach httpx request/response event hooks and patches Hermes' `wrap_code_assist_request` helper so Claude-specific body transforms run before the native Cloud Code envelope is built. The request hook is primarily for header injection, account selection, and token sync; response handling covers token refresh and model-family/header-style-aware account rotation. A background watchdog thread proactively refreshes tokens before expiry.
 
 ---
 
@@ -29,7 +30,8 @@ antigravity_auth/
 ├── cli.py                    # hermes antigravity login/accounts/list/delete/check/quota/selftest
 ├── hermes_plugin.py          # Hermes entry point: registers CLI, interceptor, recovery, tools, watchdog
 ├── hermes_provider_plugin.py # Branded provider aliases for Hermes model discovery
-├── interceptor.py            # HTTP interceptor: monkey-patches GeminiCloudCodeClient, httpx event hooks
+├── interceptor.py            # HTTP interceptor: patches modern runtime hooks or legacy Cloud Code adapter, plus httpx hooks
+├── cloudcode_client.py       # OpenAI-shaped facade over Antigravity Cloud Code for Hermes v0.18+ factory hooks
 ├── config.py                 # ~/.hermes/config.yaml loader with env overrides + TTL cache
 ├── oauth.py                  # PKCE authorize/exchange flow
 ├── storage.py                # HERMES_HOME-aware auth/account storage
@@ -81,7 +83,7 @@ The model provider plugin at `plugins/model-providers/antigravity` registers a `
 - `gemini-cli`
 - `gemini-oauth`
 
-This delegates to Hermes' native `google-gemini-cli` Cloud Code transport. The canonical runtime provider remains `google-gemini-cli`; the Antigravity names are aliases and picker branding.
+This delegates to the canonical `google-gemini-cli` Cloud Code route. On current Hermes builds, that route is supplied by the plugin's modern factory transport; on older builds it delegates through Hermes' legacy native Cloud Code adapter. The Antigravity names are aliases and picker branding.
 
 Typical usage:
 
@@ -164,7 +166,15 @@ Sensitive files:
 
 ## HTTP Interception
 
-On plugin load, `hermes_plugin.py` calls `interceptor.install()`. The install path patches two Hermes internals:
+On plugin load, `hermes_plugin.py` calls `interceptor.install()`. The install path always adds the global httpx safety hook, then chooses the Hermes integration surface that exists in the running Hermes version.
+
+For Hermes v0.18+ factory-runtime builds, the legacy `agent.gemini_cloudcode_adapter` module may be absent. In that case the plugin patches:
+
+- `agent.agent_runtime_helpers.create_openai_client`, returning `AntigravityCloudCodeClient` for Antigravity providers or the virtual `cloudcode-pa://google` base URL.
+- `hermes_cli.runtime_provider.resolve_runtime_provider`, resolving Antigravity aliases to the canonical `google-gemini-cli` provider with a virtual Cloud Code base URL.
+- `agent.auxiliary_client.resolve_provider_client`, returning sync or async Antigravity Cloud Code clients for auxiliary calls.
+
+For older Hermes builds with the legacy adapter, the install path patches:
 
 - `GeminiCloudCodeClient.__init__`, adding httpx request/response event hooks to the internal `self._http` client.
 - `agent.gemini_cloudcode_adapter.wrap_code_assist_request`, applying Claude-specific body transforms before Hermes builds the Code Assist envelope.
@@ -188,7 +198,7 @@ The **response hook** handles side effects:
 - Marks model/header-style-specific rate limits and rotates after 429 when `switch_on_first_rate_limit: true`.
 - Marks endpoints as failed on 5xx server errors for the internal endpoint helper. Current endpoint selection still returns PROD, so this is not a full automatic endpoint fallback chain.
 
-**Why a headers-first hook works:** Hermes already sends a Cloud Code request envelope (`{project, model, user_prompt_id, request}`) accepted by the production `cloudcode-pa.googleapis.com` endpoint. The request hook changes headers, credentials, and account state while preserving that native body. Claude-specific body hardening happens earlier in the wrapper patch, not in the httpx request hook.
+**Why a headers-first hook works:** both runtime paths send a Cloud Code request envelope (`{project, model, request}` plus runtime metadata when needed) accepted by the production `cloudcode-pa.googleapis.com` endpoint. The request hook changes headers, credentials, and account state while preserving the body shape. Claude-specific body hardening happens before the final HTTP send, not in the request hook.
 
 ---
 
@@ -201,12 +211,13 @@ The transform package contains the Python equivalents for request/response adapt
 | `transform/messages.py` | OpenAI-style messages to Gemini `contents[].parts[]` | Utility/test coverage; Hermes native Cloud Code path already supplies Gemini-style inner requests |
 | `transform/thinking.py` | Claude/Gemini thinking block filtering and signature helpers | Used by `_apply_claude_transforms()` for Claude request hardening |
 | `transform/schema.py` | JSON Schema allowlist sanitization helpers | Utility/test coverage; the current wrapper patch only adds Claude placeholder required fields |
-| `transform/envelope.py` | Model-name mapping, header randomization, direct Antigravity envelope helpers | Header/model helpers are used by the httpx hook; direct envelope helpers are used by tools/tests |
-| `transform/response.py` | Usage extraction, error rewriting, and non-stream response unwrap; streaming SSE is passed through unchanged | Utility/test coverage for direct Antigravity response adaptation; current runtime uses native Hermes Cloud Code stream parsing |
+| `transform/envelope.py` | Model-name mapping, header randomization, direct Antigravity envelope helpers | Header/model helpers are used by the httpx hook; envelope helpers are used by the modern Cloud Code client, tools, and tests |
+| `transform/response.py` | Usage extraction, error rewriting, and non-stream response unwrap; streaming SSE is passed through unchanged | Utility/test coverage for direct Antigravity response adaptation; modern runtime response translation is delegated to Hermes' native Gemini adapter |
 
 These modules are covered by unit tests, but they are not all on the same
-runtime path. The current Hermes Cloud Code path uses the wrapper patch for
-Claude body transforms and the httpx event hooks for headers/account selection.
+runtime path. The current Hermes v0.18 path uses `cloudcode_client.py` plus
+Hermes' native Gemini adapter for request/response translation, and the httpx
+event hooks for headers/account selection.
 
 ---
 

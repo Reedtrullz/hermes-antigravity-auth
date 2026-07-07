@@ -211,6 +211,38 @@ class TestHermesMigrationIntegration(unittest.TestCase):
                 / "plugin.yaml"
             ).exists())
 
+    def test_install_plugins_removes_deprecated_cli_toolsets(self):
+        import yaml
+        from antigravity_auth.install_plugins import install_plugins
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config_path = root / "config.yaml"
+            config_path.write_text(
+                "\n".join([
+                    "platform_toolsets:",
+                    "  cli:",
+                    "    - web",
+                    "    - messaging",
+                    "    - moa",
+                    "    - terminal",
+                    "plugins:",
+                    "  enabled:",
+                    "    - antigravity-cli",
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+
+            install_plugins(root)
+
+            parsed = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(parsed["platform_toolsets"]["cli"], ["web", "terminal"])
+            self.assertEqual(parsed["plugins"]["enabled"], ["antigravity-cli"])
+            backups = list(root.glob("config.yaml.bak.antigravity-toolsets*"))
+            self.assertEqual(len(backups), 1)
+            self.assertIn("messaging", backups[0].read_text(encoding="utf-8"))
+
     def test_resolve_hermes_python_from_bash_launcher(self):
         from antigravity_auth.install_plugins import resolve_hermes_python
 

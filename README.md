@@ -97,6 +97,9 @@ inside the package tree are refused by package builds to prevent wheel/sdist lea
 `hermes-antigravity-install` is the supported way to install or repair the CLI
 and model-provider wrappers. Do not copy plugin directories by hand; copied
 wrappers can drift from the package installed in Hermes' Python.
+The installer also removes deprecated Hermes CLI toolsets that older local
+configs may still carry, such as `messaging` and `moa`, while backing up
+`config.yaml` before changing it.
 
 ### 4. Enable the CLI plugin
 
@@ -115,11 +118,11 @@ hermes antigravity login
 hermes antigravity doctor
 ```
 
-`doctor` prints PASS/WARN/FAIL checks for the plugin entrypoint, Hermes Cloud
-Code interceptor symbols, automatic retry status and streaming replay limits,
-account-store locking backend, account/auth store permissions, config parsing,
-model registry, and active-account token refresh. It redacts secrets in all
-output.
+`doctor` prints PASS/WARN/FAIL checks for the plugin entrypoint, Hermes runtime
+factory hooks, legacy Cloud Code adapter compatibility, automatic retry status
+and streaming replay limits, account-store locking backend, account/auth store
+permissions, config parsing, active `platform_toolsets.cli` entries, model
+registry, and active-account token refresh. It redacts secrets in all output.
 
 ### 6. Use it
 
@@ -211,14 +214,29 @@ Provider aliases (`antigravity`, `antigravity-google`, `ag`, `gemini-cli`,
 `gemini-oauth`) all resolve to Hermes' canonical `google-gemini-cli` Cloud Code
 runtime. This plugin does not route through OpenRouter.
 
-On plugin load, `antigravity_auth/interceptor.py` patches two Hermes Cloud Code
-paths:
+On plugin load, `antigravity_auth/interceptor.py` installs the global httpx
+safety hook and then chooses the Hermes integration path that is available:
+
+- On Hermes v0.18+, the legacy `agent.gemini_cloudcode_adapter` module may be
+  absent. The plugin patches Hermes' modern runtime factory hooks
+  (`agent.agent_runtime_helpers.create_openai_client`,
+  `hermes_cli.runtime_provider.resolve_runtime_provider`, and
+  `agent.auxiliary_client.resolve_provider_client`) and supplies an
+  OpenAI-shaped Antigravity Cloud Code client.
+- On older Hermes builds that still expose the legacy Cloud Code adapter, the
+  plugin patches `GeminiCloudCodeClient.__init__` and
+  `wrap_code_assist_request` directly.
+
+The runtime behavior is:
 
 1. **Claude request preparation**: The patched `wrap_code_assist_request` path
-   applies Claude-specific body transforms before Hermes wraps the Code Assist
-   envelope: tool-call IDs, thinking-block stripping unless `keep_thinking` is
-   enabled, `VALIDATED` tool mode, snake_case thinking config, and placeholder
-   required fields for empty tool schemas.
+   applies Claude-specific body transforms before the Code Assist envelope is
+   sent. In the modern factory path, the Antigravity Cloud Code client reuses
+   Hermes' native Gemini request builder/response translators and wraps the
+   resulting request in the Antigravity envelope. Claude hardening still covers
+   tool-call IDs, thinking-block stripping unless `keep_thinking` is enabled,
+   `VALIDATED` tool mode, snake_case thinking config, and placeholder required
+   fields for empty tool schemas.
 2. **httpx request hook**: For `cloudcode-pa` requests, the hook reads the model,
    chooses `antigravity` or deprecated `gemini-cli` header style, selects the
    active account, reuses that account's cached access token until it is within
@@ -548,7 +566,8 @@ hermes-antigravity-auth/
 │   ├── token_watchdog.py    # Background proactive token refresh
 │   ├── storage.py           # Persistent account storage
 │   ├── cli.py               # CLI login, account management, quota check
-│   ├── interceptor.py       # HTTP interceptor: monkey-patches GeminiCloudCodeClient
+│   ├── interceptor.py       # HTTP interceptor: patches modern runtime hooks or legacy adapter
+│   ├── cloudcode_client.py  # OpenAI-shaped Antigravity Cloud Code facade
 │   ├── tools.py             # Hermes tool registration
 │   ├── search.py            # Google Search via Antigravity API
 │   ├── recovery.py          # Session recovery

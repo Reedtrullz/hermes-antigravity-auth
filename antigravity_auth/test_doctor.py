@@ -240,6 +240,35 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("not configured", row.detail)
         self.assertIn("set-credentials", row.fix)
 
+    def test_doctor_warns_when_active_cli_toolsets_are_unknown(self):
+        from pathlib import Path
+        from antigravity_auth.doctor import _check_config
+
+        config_path = Path(self.temp_dir.name) / "config.yaml"
+        config_path.write_text(
+            "\n".join([
+                "platform_toolsets:",
+                "  cli:",
+                "    - web",
+                "    - messaging",
+                "    - moa",
+                "    - custom-stale",
+                "",
+            ]),
+            encoding="utf-8",
+        )
+
+        with patch("antigravity_auth.doctor._available_hermes_toolsets", return_value={"terminal", "web"}):
+            rows = _check_config()
+
+        toolset_rows = [row for row in rows if row.check == "Hermes CLI toolsets"]
+        self.assertEqual(len(toolset_rows), 1)
+        self.assertEqual(toolset_rows[0].status, "WARN")
+        self.assertIn("messaging", toolset_rows[0].detail)
+        self.assertIn("moa", toolset_rows[0].detail)
+        self.assertIn("custom-stale", toolset_rows[0].detail)
+        self.assertIn("platform_toolsets.cli", toolset_rows[0].fix)
+
     def test_doctor_warns_when_oauth_credential_file_is_world_readable(self):
         from pathlib import Path
         from antigravity_auth.doctor import _check_oauth_client_credentials

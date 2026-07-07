@@ -281,11 +281,17 @@ def _patch_hermes_model_picker() -> None:
     groups_ready = has_grouping_features(models)
     if groups_ready:
       try:
-        group_label, members = models.PROVIDER_GROUPS.get("google", ("Google Gemini", []))
+        google_group = models.PROVIDER_GROUPS.get("google", ("Google Gemini", []))
+        group_label = google_group[0] if len(google_group) >= 1 else "Google Gemini"
+        group_desc = google_group[1] if len(google_group) >= 3 else None
+        members = google_group[2] if len(google_group) >= 3 else google_group[1]
         if "google-gemini-cli" in members:
           remaining = [slug for slug in members if slug != "google-gemini-cli"]
           if remaining:
-            models.PROVIDER_GROUPS["google"] = (group_label, remaining)
+            if group_desc is None:
+              models.PROVIDER_GROUPS["google"] = (group_label, remaining)
+            else:
+              models.PROVIDER_GROUPS["google"] = (group_label, group_desc, remaining)
           else:
             models.PROVIDER_GROUPS.pop("google", None)
         models._SLUG_TO_GROUP.pop("google-gemini-cli", None)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import os
 import re
@@ -72,6 +73,8 @@ version: {__version__}
 description: Google Antigravity OAuth via Hermes Cloud Code transport
 author: NoeFabris & Reedtrullz
 """
+
+DEPRECATED_CLI_TOOLSETS = ("messaging", "moa")
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -225,6 +228,68 @@ def install_package_in_hermes_python(hermes_python: Path, package_spec: str | No
   return True
 
 
+def _config_backup_path(config_path: Path) -> Path:
+  stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+  candidate = config_path.with_name(f"{config_path.name}.bak.antigravity-toolsets.{stamp}")
+  if not candidate.exists():
+    return candidate
+  for i in range(1, 1000):
+    numbered = config_path.with_name(f"{candidate.name}.{i}")
+    if not numbered.exists():
+      return numbered
+  raise RuntimeError(f"Could not allocate backup path for {config_path}")
+
+
+def cleanup_deprecated_cli_toolsets(home: Path | None = None) -> list[str]:
+  """Remove deprecated Hermes CLI toolset names from platform_toolsets.cli."""
+  hermes_home = home or get_hermes_home()
+  config_path = hermes_home / "config.yaml"
+  if not config_path.exists():
+    return []
+  try:
+    import yaml  # type: ignore
+  except Exception:
+    return []
+  try:
+    text = config_path.read_text(encoding="utf-8")
+    data = yaml.safe_load(text)
+  except Exception:
+    return []
+  if not isinstance(data, dict):
+    return []
+  platform_toolsets = data.get("platform_toolsets")
+  if not isinstance(platform_toolsets, dict):
+    return []
+  cli_toolsets = platform_toolsets.get("cli")
+  if not isinstance(cli_toolsets, list):
+    return []
+
+  deprecated = {name.lower() for name in DEPRECATED_CLI_TOOLSETS}
+  kept = []
+  removed = []
+  for item in cli_toolsets:
+    name = str(item).strip().lower() if isinstance(item, str) else ""
+    if name in deprecated:
+      removed.append(str(item))
+    else:
+      kept.append(item)
+  if not removed:
+    return []
+
+  platform_toolsets["cli"] = kept
+  backup = _config_backup_path(config_path)
+  shutil.copy2(config_path, backup)
+  dumped = yaml.safe_dump(data, sort_keys=False)
+  tmp_path = config_path.with_name(f"{config_path.name}.tmp.antigravity-toolsets")
+  tmp_path.write_text(dumped, encoding="utf-8")
+  try:
+    tmp_path.chmod(config_path.stat().st_mode & 0o777)
+  except OSError:
+    pass
+  tmp_path.replace(config_path)
+  return removed
+
+
 def install_plugins(home: Path | None = None) -> list[Path]:
   hermes_home = home or get_hermes_home()
   cli_dir = hermes_home / "plugins" / "antigravity-cli"
@@ -234,6 +299,7 @@ def install_plugins(home: Path | None = None) -> list[Path]:
   _write_file(cli_dir / "plugin.yaml", CLI_YAML)
   _write_file(provider_dir / "__init__.py", PROVIDER_INIT)
   _write_file(provider_dir / "plugin.yaml", PROVIDER_YAML)
+  cleanup_deprecated_cli_toolsets(hermes_home)
 
   return [cli_dir, provider_dir]
 
