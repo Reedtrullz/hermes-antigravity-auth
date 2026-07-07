@@ -9,6 +9,22 @@ from types import ModuleType
 from typing import Any
 
 
+NATIVE_ADAPTER_SYMBOLS = (
+  "build_gemini_request",
+  "translate_gemini_response",
+  "translate_stream_event",
+  "_iter_sse_events",
+  "gemini_http_error",
+)
+
+MODERN_RUNTIME_REQUIREMENTS = (
+  ("agent.agent_runtime_helpers", ("create_openai_client",)),
+  ("hermes_cli.runtime_provider", ("resolve_runtime_provider",)),
+  ("agent.auxiliary_client", ("resolve_provider_client",)),
+  ("agent.gemini_native_adapter", NATIVE_ADAPTER_SYMBOLS),
+)
+
+
 @dataclass(frozen=True)
 class HermesFeature:
   status: str
@@ -33,6 +49,17 @@ def _import_module(name: str) -> tuple[ModuleType | None, Exception | None]:
 
 def _missing(module: Any, names: tuple[str, ...]) -> list[str]:
   return [name for name in names if not hasattr(module, name)]
+
+
+def modern_runtime_feature_gaps() -> list[str]:
+  gaps: list[str] = []
+  for module_name, names in MODERN_RUNTIME_REQUIREMENTS:
+    module, error = _import_module(module_name)
+    if module is None:
+      gaps.append(f"{module_name}: {error}")
+      continue
+    gaps.extend(f"{module_name}.{name}" for name in _missing(module, names))
+  return gaps
 
 
 def detect_hermes_features() -> list[HermesFeature]:
@@ -117,53 +144,21 @@ def detect_hermes_features() -> list[HermesFeature]:
     else:
       rows.append(HermesFeature("PASS", "Hermes auth registry internals", "auth provider registry can be patched"))
 
-  runtime_helpers, runtime_helpers_error = _import_module("agent.agent_runtime_helpers")
-  runtime_provider, runtime_provider_error = _import_module("hermes_cli.runtime_provider")
-  auxiliary_client, auxiliary_client_error = _import_module("agent.auxiliary_client")
-  runtime_missing: list[str] = []
-  runtime_errors: list[str] = []
-  if runtime_helpers is None:
-    runtime_errors.append(f"agent.agent_runtime_helpers unavailable: {runtime_helpers_error}")
-  else:
-    runtime_missing.extend(
-      f"agent.agent_runtime_helpers.{name}"
-      for name in _missing(runtime_helpers, ("create_openai_client",))
-    )
-  if runtime_provider is None:
-    runtime_errors.append(f"hermes_cli.runtime_provider unavailable: {runtime_provider_error}")
-  else:
-    runtime_missing.extend(
-      f"hermes_cli.runtime_provider.{name}"
-      for name in _missing(runtime_provider, ("resolve_runtime_provider",))
-    )
-  if auxiliary_client is None:
-    runtime_errors.append(f"agent.auxiliary_client unavailable: {auxiliary_client_error}")
-  else:
-    runtime_missing.extend(
-      f"agent.auxiliary_client.{name}"
-      for name in _missing(auxiliary_client, ("resolve_provider_client",))
-    )
   runtime_ok = False
-  if runtime_errors:
+  runtime_missing = modern_runtime_feature_gaps()
+  if runtime_missing:
     rows.append(HermesFeature(
       "WARN",
       "Hermes runtime factory internals",
-      "; ".join(runtime_errors),
-      "Standalone provider fallback remains available; runtime factory patching is skipped.",
-    ))
-  elif runtime_missing:
-    rows.append(HermesFeature(
-      "WARN",
-      "Hermes runtime factory internals",
-      "missing " + ", ".join(runtime_missing),
-      "Use a Hermes build that exposes runtime provider factory hooks.",
+      "missing or unavailable " + "; ".join(runtime_missing),
+      "Use a Hermes build that exposes runtime provider factory hooks and agent.gemini_native_adapter.",
     ))
   else:
     runtime_ok = True
     rows.append(HermesFeature(
       "PASS",
       "Hermes runtime factory internals",
-      "runtime provider factory hooks are available",
+      "runtime provider factory hooks and Gemini native adapter symbols are available",
     ))
 
   adapter, adapter_error = _import_module("agent.gemini_cloudcode_adapter")
@@ -207,14 +202,4 @@ def has_grouping_features(models: Any) -> bool:
 
 
 def has_modern_runtime_features() -> bool:
-  helpers, _ = _import_module("agent.agent_runtime_helpers")
-  runtime_provider, _ = _import_module("hermes_cli.runtime_provider")
-  auxiliary_client, _ = _import_module("agent.auxiliary_client")
-  return (
-    helpers is not None
-    and runtime_provider is not None
-    and auxiliary_client is not None
-    and hasattr(helpers, "create_openai_client")
-    and hasattr(runtime_provider, "resolve_runtime_provider")
-    and hasattr(auxiliary_client, "resolve_provider_client")
-  )
+  return not modern_runtime_feature_gaps()

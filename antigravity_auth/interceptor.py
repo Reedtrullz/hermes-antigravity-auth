@@ -1412,6 +1412,7 @@ def _install_modern_runtime_patch() -> bool:
   try:
     import agent.agent_runtime_helpers as runtime_helpers
     import agent.auxiliary_client as auxiliary_client
+    from .hermes_compat import modern_runtime_feature_gaps
     import hermes_cli.runtime_provider as runtime_provider
     from .cloudcode_client import (
       AsyncAntigravityCloudCodeClient,
@@ -1423,13 +1424,7 @@ def _install_modern_runtime_patch() -> bool:
     _trace("modern-runtime-patch-fail", reason=repr(exc))
     return False
 
-  missing = []
-  if not hasattr(runtime_helpers, "create_openai_client"):
-    missing.append("agent.agent_runtime_helpers.create_openai_client")
-  if not hasattr(runtime_provider, "resolve_runtime_provider"):
-    missing.append("hermes_cli.runtime_provider.resolve_runtime_provider")
-  if not hasattr(auxiliary_client, "resolve_provider_client"):
-    missing.append("agent.auxiliary_client.resolve_provider_client")
+  missing = modern_runtime_feature_gaps()
   if missing:
     _trace("modern-runtime-patch-fail", reason="missing-symbols", missing=",".join(missing))
     return False
@@ -1438,7 +1433,9 @@ def _install_modern_runtime_patch() -> bool:
   _ORIGINAL_RESOLVE_RUNTIME_PROVIDER = runtime_provider.resolve_runtime_provider
   _ORIGINAL_RESOLVE_PROVIDER_CLIENT = auxiliary_client.resolve_provider_client
 
-  def _patched_create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
+  def _patched_create_openai_client(*args: Any, **kwargs: Any) -> Any:
+    agent = args[0] if args else kwargs.get("agent")
+    client_kwargs = args[1] if len(args) >= 2 else kwargs.get("client_kwargs") or {}
     provider = getattr(agent, "provider", "")
     base_url = ""
     try:
@@ -1453,9 +1450,14 @@ def _install_modern_runtime_patch() -> bool:
       safe_kwargs.setdefault("api_key", "antigravity-oauth")
       safe_kwargs.setdefault("base_url", VIRTUAL_CLOUDCODE_BASE_URL)
       client = AntigravityCloudCodeClient(**safe_kwargs)
-      _trace("modern-create-client", provider=provider, reason=reason, shared=shared)
+      _trace(
+        "modern-create-client",
+        provider=provider,
+        reason=kwargs.get("reason", ""),
+        shared=bool(kwargs.get("shared", False)),
+      )
       return client
-    return _ORIGINAL_CREATE_OPENAI_CLIENT(agent, client_kwargs, reason=reason, shared=shared)
+    return _ORIGINAL_CREATE_OPENAI_CLIENT(*args, **kwargs)
 
   def _patched_resolve_runtime_provider(*args: Any, **kwargs: Any) -> dict[str, Any]:
     requested = kwargs.get("requested")
@@ -1606,6 +1608,14 @@ def is_installed() -> bool:
 
 def get_routing_health() -> dict[str, Any]:
   """Return structured health for HTTP interception and Claude routing."""
+  try:
+    from .hermes_compat import has_modern_runtime_features, modern_runtime_feature_gaps
+    modern_runtime_ready = has_modern_runtime_features()
+    modern_runtime_missing = modern_runtime_feature_gaps()
+  except Exception as exc:
+    modern_runtime_ready = False
+    modern_runtime_missing = [f"could not inspect modern runtime features: {exc}"]
+
   adapter_importable = False
   adapter_symbols: list[str] = []
   adapter_error = ""
@@ -1625,7 +1635,7 @@ def get_routing_health() -> dict[str, Any]:
   wrap_patch = _ORIGINAL_WRAP_CODE_ASSIST is not None
   modern_patch = bool(_MODERN_RUNTIME_PATCHED)
 
-  if installed and global_hook and modern_patch and transform_ready:
+  if installed and global_hook and modern_patch and modern_runtime_ready and transform_ready:
     status = "ready"
     detail = "modern Hermes runtime factory transport, global HTTP hook, and Claude transforms are active"
     fix = ""
@@ -1633,6 +1643,10 @@ def get_routing_health() -> dict[str, Any]:
     status = "ready"
     detail = "interceptor, global HTTP hook, Cloud Code adapter patch, and Claude transforms are active"
     fix = ""
+  elif modern_patch and not modern_runtime_ready:
+    status = "blocked"
+    detail = "modern Hermes runtime factory transport is patched, but required runtime symbols are missing: " + "; ".join(modern_runtime_missing)
+    fix = "Use a Hermes build that exposes runtime factory hooks and agent.gemini_native_adapter."
   elif not adapter_ready and not modern_patch:
     status = "blocked"
     missing = [name for name in ("GeminiCloudCodeClient", "wrap_code_assist_request") if name not in adapter_symbols]
@@ -1668,6 +1682,8 @@ def get_routing_health() -> dict[str, Any]:
     "cloudcode_adapter_error": adapter_error,
     "cloudcode_wrap_patch_active": wrap_patch,
     "modern_factory_transport_patched": modern_patch,
+    "modern_runtime_features_available": modern_runtime_ready,
+    "modern_runtime_missing_symbols": modern_runtime_missing,
     "claude_transforms_available": transform_ready,
     "claude_routing_ready": status == "ready",
   }

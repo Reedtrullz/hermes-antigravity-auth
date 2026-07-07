@@ -55,6 +55,8 @@ class TestDoctor(unittest.TestCase):
         from antigravity_auth.doctor import run_doctor
 
         def fake_import(name):
+            if name == "agent.gemini_native_adapter":
+                raise ImportError("missing native adapter")
             if name == "agent.gemini_cloudcode_adapter":
                 raise ImportError("missing adapter")
             return __import__(name)
@@ -64,6 +66,43 @@ class TestDoctor(unittest.TestCase):
 
         adapter_rows = [row for row in rows if row.check == "Hermes adapter import"]
         self.assertTrue(adapter_rows)
+        self.assertEqual(adapter_rows[0].status, "FAIL")
+
+    def test_doctor_warns_when_modern_runtime_lacks_native_adapter_symbol(self):
+        import types
+        from antigravity_auth.doctor import _check_hermes_adapter
+
+        runtime_helpers = types.SimpleNamespace(create_openai_client=lambda *args, **kwargs: object())
+        runtime_provider = types.SimpleNamespace(resolve_runtime_provider=lambda *args, **kwargs: {})
+        auxiliary_client = types.SimpleNamespace(resolve_provider_client=lambda *args, **kwargs: (None, None))
+        native_adapter = types.SimpleNamespace(
+            build_gemini_request=lambda **kwargs: {},
+            translate_gemini_response=lambda payload, model: payload,
+            translate_stream_event=lambda event, model, tool_call_indices: [],
+            _iter_sse_events=lambda response: iter(()),
+        )
+
+        def fake_import(name):
+            modules = {
+                "agent.agent_runtime_helpers": runtime_helpers,
+                "hermes_cli.runtime_provider": runtime_provider,
+                "agent.auxiliary_client": auxiliary_client,
+                "agent.gemini_native_adapter": native_adapter,
+            }
+            if name == "agent.gemini_cloudcode_adapter":
+                raise ImportError("missing legacy adapter")
+            if name in modules:
+                return modules[name]
+            return __import__(name)
+
+        with patch("antigravity_auth.hermes_compat.importlib.import_module", side_effect=fake_import):
+            rows = _check_hermes_adapter()
+
+        runtime_rows = [row for row in rows if row.check == "Hermes runtime factory"]
+        self.assertEqual(len(runtime_rows), 1)
+        self.assertEqual(runtime_rows[0].status, "WARN")
+        self.assertIn("agent.gemini_native_adapter.gemini_http_error", runtime_rows[0].detail)
+        adapter_rows = [row for row in rows if row.check == "Hermes adapter import"]
         self.assertEqual(adapter_rows[0].status, "FAIL")
 
     def test_doctor_reports_retry_streaming_limitation_as_pass(self):

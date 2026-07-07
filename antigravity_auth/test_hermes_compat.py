@@ -104,6 +104,13 @@ class TestHermesCompat(unittest.TestCase):
     auxiliary_client = types.ModuleType("agent.auxiliary_client")
     auxiliary_client.resolve_provider_client = lambda *args, **kwargs: (None, None)
 
+    native = types.ModuleType("agent.gemini_native_adapter")
+    native.build_gemini_request = lambda **kwargs: {}
+    native.translate_gemini_response = lambda payload, model: payload
+    native.translate_stream_event = lambda event, model, tool_call_indices: []
+    native._iter_sse_events = lambda response: iter(())
+    native.gemini_http_error = lambda response, body_text="": RuntimeError(body_text)
+
     hermes_cli = types.ModuleType("hermes_cli")
     agent = types.ModuleType("agent")
 
@@ -116,6 +123,7 @@ class TestHermesCompat(unittest.TestCase):
       "agent": agent,
       "agent.agent_runtime_helpers": agent_runtime_helpers,
       "agent.auxiliary_client": auxiliary_client,
+      "agent.gemini_native_adapter": native,
       "agent.gemini_cloudcode_adapter": None,
     }):
       rows = detect_hermes_features()
@@ -123,6 +131,34 @@ class TestHermesCompat(unittest.TestCase):
     checks = {(row.check, row.status) for row in rows}
     self.assertIn(("Hermes runtime factory internals", "PASS"), checks)
     self.assertNotIn(("Hermes Cloud Code adapter internals", "FAIL"), checks)
+
+  def test_modern_runtime_features_require_native_adapter_symbols(self):
+    from antigravity_auth.hermes_compat import has_modern_runtime_features
+
+    runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+    runtime_provider.resolve_runtime_provider = lambda **kwargs: {}
+
+    agent_runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+    agent_runtime_helpers.create_openai_client = lambda *args, **kwargs: object()
+
+    auxiliary_client = types.ModuleType("agent.auxiliary_client")
+    auxiliary_client.resolve_provider_client = lambda *args, **kwargs: (None, None)
+
+    native = types.ModuleType("agent.gemini_native_adapter")
+    native.build_gemini_request = lambda **kwargs: {}
+    native.translate_gemini_response = lambda payload, model: payload
+    native.translate_stream_event = lambda event, model, tool_call_indices: []
+    native._iter_sse_events = lambda response: iter(())
+
+    with patch.dict(sys.modules, {
+      "hermes_cli": types.ModuleType("hermes_cli"),
+      "hermes_cli.runtime_provider": runtime_provider,
+      "agent": types.ModuleType("agent"),
+      "agent.agent_runtime_helpers": agent_runtime_helpers,
+      "agent.auxiliary_client": auxiliary_client,
+      "agent.gemini_native_adapter": native,
+    }):
+      self.assertFalse(has_modern_runtime_features())
 
   def test_model_picker_feature_helper_reports_missing_private_symbols(self):
     from antigravity_auth.hermes_compat import has_required_model_picker_features

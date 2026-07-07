@@ -64,33 +64,23 @@ def _check_entrypoint() -> DoctorRow:
 
 
 def _check_hermes_adapter() -> list[DoctorRow]:
-  rows: list[DoctorRow] = []
-  modern_missing: list[str] = []
-  for module_name, symbol in (
-    ("agent.agent_runtime_helpers", "create_openai_client"),
-    ("hermes_cli.runtime_provider", "resolve_runtime_provider"),
-    ("agent.auxiliary_client", "resolve_provider_client"),
-  ):
-    try:
-      module = importlib.import_module(module_name)
-      if not hasattr(module, symbol):
-        modern_missing.append(f"{module_name}.{symbol}")
-    except Exception as exc:
-      modern_missing.append(f"{module_name}: {exc}")
+  from .hermes_compat import modern_runtime_feature_gaps
 
+  rows: list[DoctorRow] = []
+  modern_missing = modern_runtime_feature_gaps()
   modern_ready = not modern_missing
   if modern_ready:
     rows.append(_row(
       "PASS",
       "Hermes runtime factory",
-      "agent runtime factory, runtime provider resolver, and auxiliary resolver are available",
+      "agent runtime factory, runtime provider resolver, auxiliary resolver, and Gemini native adapter are available",
     ))
   else:
     rows.append(_row(
       "WARN",
       "Hermes runtime factory",
       "missing " + "; ".join(modern_missing),
-      "Use a Hermes build with runtime factory hooks or legacy google-gemini-cli Cloud Code support.",
+      "Use a Hermes build with runtime factory hooks, agent.gemini_native_adapter, or legacy google-gemini-cli Cloud Code support.",
     ))
 
   try:
