@@ -37,15 +37,15 @@ Install the hermes-antigravity-auth plugin for Hermes Agent by following the ins
 
 **Option B: Manual setup**
 
-### 1. Install from Git and run the installer
+### 1. Install from PyPI and run the installer
 
-The canonical install and update path is the Git package plus
+The canonical install and update path is the PyPI package plus
 `hermes-antigravity-install`. The installer resolves the Python environment used
 by the `hermes` launcher, installs this package into that environment, and writes
 the Hermes file-plugin wrappers.
 
 ```bash
-python3 -m pip install --upgrade "hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
+python3 -m pip install --upgrade "hermes-antigravity-auth[yaml]"
 hermes-antigravity-install
 ```
 
@@ -56,7 +56,7 @@ support.
 
 ### 2. Provide OAuth client credentials
 
-Source/git installs do not include private OAuth client credentials. Before
+Package installs do not include private OAuth client credentials. Before
 running `hermes antigravity login`, create a Google OAuth desktop client with
 authorized redirect URI `http://localhost:51121/oauth-callback`, then store
 its values in Hermes home:
@@ -147,9 +147,9 @@ In `hermes model` and the in-agent `/model` picker, Antigravity appears as
 
 ### Step-by-Step Instructions
 
-1. Install from GitHub and run the installer:
+1. Install from PyPI and run the installer:
    ```bash
-   python3 -m pip install --upgrade "hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
+   python3 -m pip install --upgrade "hermes-antigravity-auth[yaml]"
    hermes-antigravity-install
    ```
 
@@ -336,7 +336,7 @@ scheduling modes are `cache_first`, `balance`, and `performance_first`.
 Percentage values are clamped to 0–100, retry/backoff intervals are clamped to
 sane positive bounds, and `soft_quota_cache_ttl_minutes` must be `auto` or a
 positive integer. Install with the `[yaml]` extra (`pip install
-"hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"`
+"hermes-antigravity-auth[yaml]"`
 or `pip install -e ".[dev,yaml]"` from a checkout) when using config files. If
 `~/.hermes/config.yaml` exists without PyYAML installed, the doctor command
 reports a WARN with the install command.
@@ -544,7 +544,7 @@ Key differences:
 |------|----------|--------|
 | Config dir | `~/.config/opencode/` | `~/.hermes/` |
 | Login | `opencode auth login` | `hermes antigravity login` |
-| Package | npm | Python package from source/git; PyPI if published |
+| Package | npm | Python package from PyPI or source/git |
 | Accounts file | `antigravity-accounts.json` | Same format, compatible |
 
 Accounts file format is identical — just copy it over:
@@ -588,7 +588,7 @@ hermes-antigravity-auth/
 ├── plugins/
 │   ├── model-providers/     # Hermes model provider plugin
 │   └── antigravity-cli/     # Hermes CLI plugin
-├── pyproject.toml           # Python package config (v1.7.0)
+├── pyproject.toml           # Python package config (v1.8.0)
 ├── MIGRATION.md             # OpenCode → Hermes migration guide
 └── README.md                # This file
 ```

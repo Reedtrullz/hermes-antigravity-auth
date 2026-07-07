@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 class TestPluginContract(unittest.TestCase):
   def test_wrapper_import_error_is_actionable(self):
-    from antigravity_auth.package_info import GIT_PACKAGE_SPEC, INSTALL_COMMAND
+    from antigravity_auth.package_info import GIT_PACKAGE_SPEC, INSTALL_COMMAND, PACKAGE_SPEC
     from antigravity_auth.plugin_contract import wrapper_import_error
 
     error = wrapper_import_error(
@@ -22,8 +22,8 @@ class TestPluginContract(unittest.TestCase):
     self.assertIn("Wrapper: /tmp/antigravity-wrapper/__init__.py", message)
     self.assertIn(f"Python: {Path(sys.executable).expanduser()}", message)
     self.assertIn(INSTALL_COMMAND, message)
-    self.assertIn(GIT_PACKAGE_SPEC, message)
-    self.assertNotIn("pip install --upgrade hermes-antigravity-auth[yaml]\n", message)
+    self.assertIn(PACKAGE_SPEC, message)
+    self.assertNotIn(GIT_PACKAGE_SPEC, message)
 
   def test_load_cli_register_wraps_import_failure(self):
     from antigravity_auth.plugin_contract import load_cli_register

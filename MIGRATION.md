@@ -29,7 +29,7 @@ by the `hermes` launcher, installs this package into that environment, and write
 the Hermes file-plugin wrappers.
 
 ```bash
-python3 -m pip install --upgrade "hermes-antigravity-auth[yaml] @ git+https://github.com/Reedtrullz/hermes-antigravity-auth.git"
+python3 -m pip install --upgrade "hermes-antigravity-auth[yaml]"
 hermes-antigravity-install
 ```
 
