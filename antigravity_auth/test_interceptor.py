@@ -1,5 +1,6 @@
 """Tests for the HTTP interceptor — headers-only request hook."""
 
+import asyncio
 import json
 import os
 import stat
@@ -1253,6 +1254,121 @@ class TestRoutingHealth(unittest.TestCase):
             interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original[1]
             interceptor._ORIGINAL_WRAP_CODE_ASSIST = original[2]
 
+    def test_install_patches_modern_hermes_factory_when_cloudcode_adapter_is_missing(self):
+        import antigravity_auth.interceptor as interceptor
+
+        agent_runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+        runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+        auxiliary_client = types.ModuleType("agent.auxiliary_client")
+
+        original_client = object()
+
+        def original_create(agent, client_kwargs, *, reason, shared):
+            return original_client
+
+        def original_runtime(**kwargs):
+            return {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1"}
+
+        def original_aux(provider, *args, **kwargs):
+            return None, None
+
+        agent_runtime_helpers.create_openai_client = original_create
+        runtime_provider.resolve_runtime_provider = original_runtime
+        auxiliary_client.resolve_provider_client = original_aux
+
+        fake_agent_pkg = types.ModuleType("agent")
+        fake_hermes_cli = types.ModuleType("hermes_cli")
+        fake_agent = types.SimpleNamespace(provider="google-gemini-cli")
+        other_agent = types.SimpleNamespace(provider="openrouter")
+
+        original_state = (
+            interceptor._PATCHED,
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED,
+            interceptor._ORIGINAL_INIT,
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST,
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT,
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT,
+            interceptor._ORIGINAL_RESOLVE_RUNTIME_PROVIDER,
+            interceptor._ORIGINAL_RESOLVE_PROVIDER_CLIENT,
+            interceptor._MODERN_RUNTIME_PATCHED,
+        )
+        interceptor._PATCHED = False
+        interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = False
+        interceptor._ORIGINAL_INIT = None
+        interceptor._ORIGINAL_WRAP_CODE_ASSIST = None
+        interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+        interceptor._ORIGINAL_CREATE_OPENAI_CLIENT = None
+        interceptor._ORIGINAL_RESOLVE_RUNTIME_PROVIDER = None
+        interceptor._ORIGINAL_RESOLVE_PROVIDER_CLIENT = None
+        interceptor._MODERN_RUNTIME_PATCHED = False
+
+        try:
+            def mark_global_hook_installed():
+                interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = True
+
+            with patch.dict(sys.modules, {
+                "agent": fake_agent_pkg,
+                "agent.gemini_cloudcode_adapter": None,
+                "agent.agent_runtime_helpers": agent_runtime_helpers,
+                "agent.auxiliary_client": auxiliary_client,
+                "hermes_cli": fake_hermes_cli,
+                "hermes_cli.runtime_provider": runtime_provider,
+            }), patch(
+                "antigravity_auth.interceptor._install_global_httpx_hook",
+                side_effect=mark_global_hook_installed,
+            ):
+                self.assertTrue(interceptor.install())
+
+            client = agent_runtime_helpers.create_openai_client(
+                fake_agent,
+                {"api_key": "placeholder", "base_url": "cloudcode-pa://google"},
+                reason="test",
+                shared=False,
+            )
+            self.assertEqual(type(client).__name__, "AntigravityCloudCodeClient")
+            self.assertIs(
+                agent_runtime_helpers.create_openai_client(
+                    other_agent,
+                    {"api_key": "key", "base_url": "https://openrouter.ai/api/v1"},
+                    reason="test",
+                    shared=False,
+                ),
+                original_client,
+            )
+            runtime = runtime_provider.resolve_runtime_provider(requested="antigravity")
+            self.assertEqual(runtime["provider"], "google-gemini-cli")
+            self.assertEqual(runtime["base_url"], "cloudcode-pa://google")
+            aux_client, aux_model = auxiliary_client.resolve_provider_client(
+                "google-gemini-cli",
+                model="gemini-3.5-flash",
+            )
+            self.assertEqual(type(aux_client).__name__, "AntigravityCloudCodeClient")
+            self.assertEqual(aux_model, "gemini-3.5-flash")
+            async_client, async_model = auxiliary_client.resolve_provider_client(
+                "google-gemini-cli",
+                model="gemini-3.5-flash",
+                async_mode=True,
+            )
+            self.assertEqual(type(async_client).__name__, "AsyncAntigravityCloudCodeClient")
+            self.assertEqual(async_model, "gemini-3.5-flash")
+            health = interceptor.get_routing_health()
+            self.assertEqual(health["status"], "ready")
+            self.assertTrue(health["modern_factory_transport_patched"])
+            client.close()
+            aux_client.close()
+            asyncio.run(async_client.close())
+            self.assertTrue(interceptor.uninstall())
+        finally:
+            interceptor._PATCHED = original_state[0]
+            interceptor._GLOBAL_HTTPX_HOOK_INSTALLED = original_state[1]
+            interceptor._ORIGINAL_INIT = original_state[2]
+            interceptor._ORIGINAL_WRAP_CODE_ASSIST = original_state[3]
+            interceptor._ORIGINAL_ENSURE_PROJECT_CONTEXT = original_state[4]
+            interceptor._ORIGINAL_CREATE_OPENAI_CLIENT = original_state[5]
+            interceptor._ORIGINAL_RESOLVE_RUNTIME_PROVIDER = original_state[6]
+            interceptor._ORIGINAL_RESOLVE_PROVIDER_CLIENT = original_state[7]
+            interceptor._MODERN_RUNTIME_PATCHED = original_state[8]
+
 
 class TestRetryWrapper(unittest.TestCase):
 
@@ -1487,6 +1603,49 @@ class TestResponseHook(unittest.TestCase):
             )
         response_kwargs = {"json": json_body} if json_body is not None else {}
         return httpx.Response(status, request=req, headers={"Retry-After": "3"}, **response_kwargs)
+
+    def test_response_hook_ignores_non_cloudcode_401_after_global_request_hook(self):
+        from antigravity_auth.interceptor import _RESPONSE_HOOK_PROCESSED, _antigravity_response_hook
+
+        accounts = {
+            "version": 4,
+            "accounts": [{
+                "email": "user@example.com",
+                "refreshToken": "refresh-token",
+                "projectId": "project-id",
+            }],
+            "activeIndex": 0,
+            "activeIndexByFamily": {"claude": 0, "gemini": 0},
+        }
+        request = httpx.Request(
+            "POST",
+            "https://auth.openai.com/oauth/token",
+            json={"model": "gpt-5.5"},
+        )
+        request.read()
+        request.extensions["antigravity_request_hook_processed"] = True
+        response = httpx.Response(401, request=request)
+        config = type("Config", (), {
+            "proactive_token_refresh": True,
+            "switch_on_first_rate_limit": True,
+            "default_retry_after_seconds": 10,
+            "cli_first": False,
+        })()
+
+        with patch("antigravity_auth.config.get_config", return_value=config) as get_config, patch(
+            "antigravity_auth.storage.load_accounts",
+            return_value=accounts,
+        ) as load_accounts, patch(
+            "antigravity_auth.token.refresh_access_token",
+            return_value={"access": "should-not-refresh"},
+        ) as refresh_mock:
+            _antigravity_response_hook(response)
+
+        get_config.assert_not_called()
+        load_accounts.assert_not_called()
+        refresh_mock.assert_not_called()
+        self.assertNotIn(_RESPONSE_HOOK_PROCESSED, response.request.extensions)
+        self.assertNotIn("antigravity_retry_ready", response.request.extensions)
 
     def test_response_account_for_request_skips_reindexed_identity_mismatch(self):
         from antigravity_auth.interceptor import _response_account_for_request

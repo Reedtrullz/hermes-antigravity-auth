@@ -21,6 +21,7 @@ from .storage import (
   resolve_active_account_index,
 )
 from .token import format_refresh_parts, refresh_access_token
+from .install_plugins import DEPRECATED_CLI_TOOLSETS
 
 
 @dataclass
@@ -64,6 +65,34 @@ def _check_entrypoint() -> DoctorRow:
 
 def _check_hermes_adapter() -> list[DoctorRow]:
   rows: list[DoctorRow] = []
+  modern_missing: list[str] = []
+  for module_name, symbol in (
+    ("agent.agent_runtime_helpers", "create_openai_client"),
+    ("hermes_cli.runtime_provider", "resolve_runtime_provider"),
+    ("agent.auxiliary_client", "resolve_provider_client"),
+  ):
+    try:
+      module = importlib.import_module(module_name)
+      if not hasattr(module, symbol):
+        modern_missing.append(f"{module_name}.{symbol}")
+    except Exception as exc:
+      modern_missing.append(f"{module_name}: {exc}")
+
+  modern_ready = not modern_missing
+  if modern_ready:
+    rows.append(_row(
+      "PASS",
+      "Hermes runtime factory",
+      "agent runtime factory, runtime provider resolver, and auxiliary resolver are available",
+    ))
+  else:
+    rows.append(_row(
+      "WARN",
+      "Hermes runtime factory",
+      "missing " + "; ".join(modern_missing),
+      "Use a Hermes build with runtime factory hooks or legacy google-gemini-cli Cloud Code support.",
+    ))
+
   try:
     module = importlib.import_module("agent.gemini_cloudcode_adapter")
     rows.append(_row("PASS", "Hermes adapter import", "agent.gemini_cloudcode_adapter imports"))
@@ -79,10 +108,10 @@ def _check_hermes_adapter() -> list[DoctorRow]:
       rows.append(_row("PASS", "Hermes adapter symbols", "GeminiCloudCodeClient and wrap_code_assist_request exist"))
   except Exception as exc:
     rows.append(_row(
-      "FAIL",
+      "INFO" if modern_ready else "FAIL",
       "Hermes adapter import",
       f"could not import agent.gemini_cloudcode_adapter: {exc}",
-      "Run inside the Hermes Agent environment or install a Hermes version with google-gemini-cli support.",
+      "Modern runtime factory hooks will be used." if modern_ready else "Run inside the Hermes Agent environment or install a Hermes version with google-gemini-cli support.",
     ))
   return rows
 
@@ -359,9 +388,63 @@ def _check_auth_files() -> list[DoctorRow]:
   return rows
 
 
+def _available_hermes_toolsets() -> set[str] | None:
+  try:
+    module = importlib.import_module("toolsets")
+    get_all = getattr(module, "get_all_toolsets", None)
+    if not callable(get_all):
+      return None
+    toolsets = get_all()
+  except Exception:
+    return None
+  if isinstance(toolsets, dict):
+    return {str(name) for name in toolsets}
+  if isinstance(toolsets, (list, tuple, set)):
+    return {str(name) for name in toolsets}
+  return None
+
+
+def _check_platform_toolsets_config(parsed: dict[str, Any]) -> list[DoctorRow]:
+  platform_toolsets = parsed.get("platform_toolsets")
+  if not isinstance(platform_toolsets, dict) or "cli" not in platform_toolsets:
+    return []
+  cli_toolsets = platform_toolsets.get("cli")
+  if not isinstance(cli_toolsets, list):
+    return [_row(
+      "WARN",
+      "Hermes CLI toolsets",
+      "platform_toolsets.cli is not a YAML list",
+      "Make platform_toolsets.cli a list of Hermes toolset names, or remove it to use Hermes defaults.",
+    )]
+
+  names = [str(item).strip() for item in cli_toolsets if isinstance(item, str) and str(item).strip()]
+  available = _available_hermes_toolsets()
+  deprecated = {name.lower() for name in DEPRECATED_CLI_TOOLSETS}
+  if available is not None:
+    allowed = set(available) | {"all", "*"}
+    unknown = [name for name in names if name not in allowed]
+  else:
+    unknown = [name for name in names if name.lower() in deprecated]
+
+  if unknown:
+    return [_row(
+      "WARN",
+      "Hermes CLI toolsets",
+      "platform_toolsets.cli contains unknown toolsets: " + ", ".join(unknown),
+      (
+        "Remove unknown entries from platform_toolsets.cli. "
+        f"Run {INSTALL_COMMAND} to remove deprecated entries such as "
+        + ", ".join(DEPRECATED_CLI_TOOLSETS)
+        + "."
+      ),
+    )]
+  return [_row("PASS", "Hermes CLI toolsets", "platform_toolsets.cli entries are recognized")]
+
+
 def _check_config() -> list[DoctorRow]:
   rows: list[DoctorRow] = []
   config_path = get_hermes_home() / "config.yaml"
+  parsed_config: dict[str, Any] | None = None
   if config_path.exists():
     try:
       import yaml  # type: ignore
@@ -371,6 +454,8 @@ def _check_config() -> list[DoctorRow]:
           parsed = yaml.safe_load(f)
         if parsed is None or isinstance(parsed, dict):
           rows.append(_row("PASS", "config.yaml", "parsed successfully"))
+          if isinstance(parsed, dict):
+            parsed_config = parsed
         else:
           rows.append(_row("FAIL", "config.yaml", "top-level YAML value is not a mapping", "Make ~/.hermes/config.yaml a YAML mapping."))
       except Exception as exc:
@@ -379,6 +464,8 @@ def _check_config() -> list[DoctorRow]:
       rows.append(_row("WARN", "PyYAML", f"{config_path} exists but PyYAML is not installed", f"Run {INSTALL_COMMAND}; normal installs include {GIT_PACKAGE_SPEC}."))
   else:
     rows.append(_row("WARN", "config.yaml", f"{config_path} is missing", "Create config.yaml if you need plugin settings; defaults are usable."))
+  if parsed_config is not None:
+    rows.extend(_check_platform_toolsets_config(parsed_config))
   try:
     from .config import get_config
     config = get_config(force_reload=True)

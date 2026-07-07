@@ -12,7 +12,8 @@ antigravity_auth/
 ├── token_watchdog.py     # Background daemon thread for proactive token refresh
 ├── storage.py            # ~/.hermes/antigravity-accounts.json + auth.json
 ├── cli.py                # OAuth callback server, login flow, account management, quota check
-├── interceptor.py        # HTTP interceptor: monkey-patches GeminiCloudCodeClient
+├── interceptor.py        # HTTP interceptor: patches modern runtime hooks or legacy adapter
+├── cloudcode_client.py   # OpenAI-shaped Antigravity Cloud Code facade
 ├── tools.py              # Hermes tool registration (google_antigravity_search)
 ├── search.py             # Google Search tool via Antigravity API
 ├── recovery.py           # Session recovery: tool_result_missing, thinking block errors

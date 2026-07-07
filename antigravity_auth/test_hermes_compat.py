@@ -73,6 +73,57 @@ class TestHermesCompat(unittest.TestCase):
     self.assertIn(("Hermes auth registry internals", "PASS"), checks)
     self.assertIn(("Hermes Cloud Code adapter internals", "PASS"), checks)
 
+  def test_detect_passes_with_modern_factory_runtime_without_cloudcode_adapter(self):
+    from antigravity_auth.hermes_compat import detect_hermes_features
+
+    ProviderEntry = namedtuple("ProviderEntry", "slug label tui_desc")
+
+    models = types.ModuleType("hermes_cli.models")
+    models._PROVIDER_MODELS = {}
+    models._PROVIDER_LABELS = {}
+    models._PROVIDER_ALIASES = {}
+    models.ProviderEntry = ProviderEntry
+    models.CANONICAL_PROVIDERS = []
+    models.PROVIDER_GROUPS = {}
+    models._SLUG_TO_GROUP = {}
+
+    providers = types.ModuleType("hermes_cli.providers")
+    providers._LABEL_OVERRIDES = {}
+    providers.ALIASES = {}
+
+    auth = types.ModuleType("hermes_cli.auth")
+    auth.PROVIDER_REGISTRY = {}
+    auth.ProviderConfig = lambda **kwargs: kwargs
+
+    runtime_provider = types.ModuleType("hermes_cli.runtime_provider")
+    runtime_provider.resolve_runtime_provider = lambda **kwargs: {}
+
+    agent_runtime_helpers = types.ModuleType("agent.agent_runtime_helpers")
+    agent_runtime_helpers.create_openai_client = lambda *args, **kwargs: object()
+
+    auxiliary_client = types.ModuleType("agent.auxiliary_client")
+    auxiliary_client.resolve_provider_client = lambda *args, **kwargs: (None, None)
+
+    hermes_cli = types.ModuleType("hermes_cli")
+    agent = types.ModuleType("agent")
+
+    with patch.dict(sys.modules, {
+      "hermes_cli": hermes_cli,
+      "hermes_cli.models": models,
+      "hermes_cli.providers": providers,
+      "hermes_cli.auth": auth,
+      "hermes_cli.runtime_provider": runtime_provider,
+      "agent": agent,
+      "agent.agent_runtime_helpers": agent_runtime_helpers,
+      "agent.auxiliary_client": auxiliary_client,
+      "agent.gemini_cloudcode_adapter": None,
+    }):
+      rows = detect_hermes_features()
+
+    checks = {(row.check, row.status) for row in rows}
+    self.assertIn(("Hermes runtime factory internals", "PASS"), checks)
+    self.assertNotIn(("Hermes Cloud Code adapter internals", "FAIL"), checks)
+
   def test_model_picker_feature_helper_reports_missing_private_symbols(self):
     from antigravity_auth.hermes_compat import has_required_model_picker_features
 

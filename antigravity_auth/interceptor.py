@@ -29,6 +29,10 @@ _PATCHED = False
 _ORIGINAL_INIT = None
 _ORIGINAL_WRAP_CODE_ASSIST = None
 _ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+_ORIGINAL_CREATE_OPENAI_CLIENT = None
+_ORIGINAL_RESOLVE_RUNTIME_PROVIDER = None
+_ORIGINAL_RESOLVE_PROVIDER_CLIENT = None
+_MODERN_RUNTIME_PATCHED = False
 
 _TRACE_DIR = None
 _REQUEST_HOOK_PROCESSED = "antigravity_request_hook_processed"
@@ -146,6 +150,28 @@ def _request_model_from_response(response: httpx.Response) -> str:
   except Exception:
     return ""
   return ""
+
+
+def _is_antigravity_response_request(response: httpx.Response) -> bool:
+  try:
+    request = response.request
+  except Exception:
+    return False
+  if "cloudcode-pa" in str(request.url):
+    return True
+  extensions = getattr(request, "extensions", {})
+  if not isinstance(extensions, dict):
+    return False
+  antigravity_markers = {
+    "antigravity_header_style",
+    "antigravity_model_family",
+    "antigravity_selected_account_index",
+    "antigravity_selected_account_identity",
+    "antigravity_account_selection_failed",
+    "antigravity_retry_ready",
+    "antigravity_retry_attempted",
+  }
+  return any(marker in extensions for marker in antigravity_markers)
 
 
 def _replace_request_json(request: httpx.Request, body: dict[str, Any]) -> None:
@@ -909,6 +935,9 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
     if request_extensions.get(_RESPONSE_HOOK_PROCESSED):
         _trace("response-hook-skip", reason="already-processed")
         return
+    if not _is_antigravity_response_request(response):
+        _trace("response-hook-skip", reason="not-antigravity-request", url=str(response.request.url)[:120])
+        return
     request_extensions[_RESPONSE_HOOK_PROCESSED] = True
     from .config import get_config
     config = get_config()
@@ -1193,10 +1222,10 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
 
     if response.status_code >= 500:
         try:
-            from .endpoints import mark_endpoint_failed
             from urllib.parse import urlparse
+            from . import endpoints
             p = urlparse(str(response.request.url))
-            mark_endpoint_failed(f"https://{p.netloc}")
+            endpoints.mark_endpoint_failed(f"https://{p.netloc}")
         except Exception:
             pass
 
@@ -1349,6 +1378,126 @@ def _install_global_httpx_hook() -> None:
     _trace("global-httpx-hook-installed")
 
 
+def _is_antigravity_provider_name(value: Any) -> bool:
+  return str(value or "").strip().lower() in {
+    "google-gemini-cli",
+    "antigravity",
+    "antigravity-google",
+    "ag",
+    "gemini-cli",
+    "gemini-oauth",
+  }
+
+
+def _antigravity_runtime(requested: Any = None) -> dict[str, Any]:
+  return {
+    "provider": "google-gemini-cli",
+    "api_mode": "chat_completions",
+    "base_url": "cloudcode-pa://google",
+    "api_key": "antigravity-oauth",
+    "source": "antigravity-auth-store",
+    "requested_provider": str(requested or "google-gemini-cli"),
+  }
+
+
+def _install_modern_runtime_patch() -> bool:
+  global _PATCHED
+  global _ORIGINAL_CREATE_OPENAI_CLIENT, _ORIGINAL_RESOLVE_RUNTIME_PROVIDER
+  global _ORIGINAL_RESOLVE_PROVIDER_CLIENT, _MODERN_RUNTIME_PATCHED
+
+  if _MODERN_RUNTIME_PATCHED:
+    _PATCHED = True
+    return True
+
+  try:
+    import agent.agent_runtime_helpers as runtime_helpers
+    import agent.auxiliary_client as auxiliary_client
+    import hermes_cli.runtime_provider as runtime_provider
+    from .cloudcode_client import (
+      AsyncAntigravityCloudCodeClient,
+      AntigravityCloudCodeClient,
+      VIRTUAL_CLOUDCODE_BASE_URL,
+      is_antigravity_cloudcode_base_url,
+    )
+  except Exception as exc:
+    _trace("modern-runtime-patch-fail", reason=repr(exc))
+    return False
+
+  missing = []
+  if not hasattr(runtime_helpers, "create_openai_client"):
+    missing.append("agent.agent_runtime_helpers.create_openai_client")
+  if not hasattr(runtime_provider, "resolve_runtime_provider"):
+    missing.append("hermes_cli.runtime_provider.resolve_runtime_provider")
+  if not hasattr(auxiliary_client, "resolve_provider_client"):
+    missing.append("agent.auxiliary_client.resolve_provider_client")
+  if missing:
+    _trace("modern-runtime-patch-fail", reason="missing-symbols", missing=",".join(missing))
+    return False
+
+  _ORIGINAL_CREATE_OPENAI_CLIENT = runtime_helpers.create_openai_client
+  _ORIGINAL_RESOLVE_RUNTIME_PROVIDER = runtime_provider.resolve_runtime_provider
+  _ORIGINAL_RESOLVE_PROVIDER_CLIENT = auxiliary_client.resolve_provider_client
+
+  def _patched_create_openai_client(agent, client_kwargs: dict, *, reason: str, shared: bool) -> Any:
+    provider = getattr(agent, "provider", "")
+    base_url = ""
+    try:
+      base_url = str((client_kwargs or {}).get("base_url") or "")
+    except Exception:
+      base_url = ""
+    if _is_antigravity_provider_name(provider) or is_antigravity_cloudcode_base_url(base_url):
+      safe_kwargs = {
+        k: v for k, v in dict(client_kwargs or {}).items()
+        if k in {"api_key", "base_url", "default_headers", "timeout", "http_client"}
+      }
+      safe_kwargs.setdefault("api_key", "antigravity-oauth")
+      safe_kwargs.setdefault("base_url", VIRTUAL_CLOUDCODE_BASE_URL)
+      client = AntigravityCloudCodeClient(**safe_kwargs)
+      _trace("modern-create-client", provider=provider, reason=reason, shared=shared)
+      return client
+    return _ORIGINAL_CREATE_OPENAI_CLIENT(agent, client_kwargs, reason=reason, shared=shared)
+
+  def _patched_resolve_runtime_provider(*args: Any, **kwargs: Any) -> dict[str, Any]:
+    requested = kwargs.get("requested")
+    if requested is None and args:
+      requested = args[0]
+    if _is_antigravity_provider_name(requested):
+      _trace("modern-resolve-runtime", requested=requested)
+      return _antigravity_runtime(requested)
+    return _ORIGINAL_RESOLVE_RUNTIME_PROVIDER(*args, **kwargs)
+
+  def _patched_resolve_provider_client(provider: str, *args: Any, **kwargs: Any):
+    if _is_antigravity_provider_name(provider):
+      model = kwargs.get("model")
+      if model is None and args:
+        model = args[0]
+      async_mode = bool(kwargs.get("async_mode", False))
+      if len(args) >= 2:
+        async_mode = bool(args[1])
+      main_runtime = kwargs.get("main_runtime")
+      if not model and isinstance(main_runtime, dict):
+        model = main_runtime.get("model")
+      final_model = str(model or "gemini-3.5-flash")
+      client = AntigravityCloudCodeClient(
+        api_key="antigravity-oauth",
+        base_url=VIRTUAL_CLOUDCODE_BASE_URL,
+      )
+      if async_mode:
+        client = AsyncAntigravityCloudCodeClient(client)
+      _trace("modern-resolve-aux-client", provider=provider, model=final_model)
+      return client, final_model
+    return _ORIGINAL_RESOLVE_PROVIDER_CLIENT(provider, *args, **kwargs)
+
+  runtime_helpers.create_openai_client = _patched_create_openai_client
+  runtime_provider.resolve_runtime_provider = _patched_resolve_runtime_provider
+  auxiliary_client.resolve_provider_client = _patched_resolve_provider_client
+  _MODERN_RUNTIME_PATCHED = True
+  _PATCHED = True
+  _trace("modern-runtime-patch-ok")
+  logger.info("Antigravity modern Hermes runtime factory patch installed")
+  return True
+
+
 def install() -> bool:
   global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST, _ORIGINAL_ENSURE_PROJECT_CONTEXT
   if _PATCHED:
@@ -1362,7 +1511,7 @@ def install() -> bool:
     from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient, wrap_code_assist_request
   except ImportError:
     _trace("install-fail", reason="import-error-gemini-cloudcode-adapter")
-    return False
+    return _install_modern_runtime_patch()
   _ORIGINAL_INIT = GeminiCloudCodeClient.__init__
   _ORIGINAL_ENSURE_PROJECT_CONTEXT = getattr(
     GeminiCloudCodeClient,
@@ -1474,19 +1623,24 @@ def get_routing_health() -> dict[str, Any]:
   installed = bool(_PATCHED)
   global_hook = bool(_GLOBAL_HTTPX_HOOK_INSTALLED)
   wrap_patch = _ORIGINAL_WRAP_CODE_ASSIST is not None
+  modern_patch = bool(_MODERN_RUNTIME_PATCHED)
 
-  if installed and global_hook and adapter_ready and wrap_patch and transform_ready:
+  if installed and global_hook and modern_patch and transform_ready:
+    status = "ready"
+    detail = "modern Hermes runtime factory transport, global HTTP hook, and Claude transforms are active"
+    fix = ""
+  elif installed and global_hook and adapter_ready and wrap_patch and transform_ready:
     status = "ready"
     detail = "interceptor, global HTTP hook, Cloud Code adapter patch, and Claude transforms are active"
     fix = ""
-  elif not adapter_ready:
+  elif not adapter_ready and not modern_patch:
     status = "blocked"
     missing = [name for name in ("GeminiCloudCodeClient", "wrap_code_assist_request") if name not in adapter_symbols]
     if adapter_error:
       detail = f"Cloud Code adapter is unavailable: {adapter_error}"
     else:
       detail = "Cloud Code adapter is missing " + ", ".join(missing)
-    fix = "Run inside Hermes Agent with google-gemini-cli Cloud Code support."
+    fix = "Use a Hermes build with runtime factory hooks or legacy google-gemini-cli Cloud Code support."
   else:
     status = "degraded"
     missing = []
@@ -1494,8 +1648,10 @@ def get_routing_health() -> dict[str, Any]:
       missing.append("interceptor patch")
     if not global_hook:
       missing.append("global HTTP hook")
-    if not wrap_patch:
+    if not wrap_patch and not modern_patch:
       missing.append("Cloud Code request wrapper patch")
+    if not modern_patch and not adapter_ready:
+      missing.append("modern runtime factory patch")
     if not transform_ready:
       missing.append("Claude transform helpers")
     detail = "missing " + ", ".join(missing)
@@ -1511,6 +1667,7 @@ def get_routing_health() -> dict[str, Any]:
     "cloudcode_adapter_symbols": adapter_symbols,
     "cloudcode_adapter_error": adapter_error,
     "cloudcode_wrap_patch_active": wrap_patch,
+    "modern_factory_transport_patched": modern_patch,
     "claude_transforms_available": transform_ready,
     "claude_routing_ready": status == "ready",
   }
@@ -1521,21 +1678,43 @@ def uninstall() -> bool:
 
   Returns True if successfully uninstalled, False if not installed."""
   global _PATCHED, _ORIGINAL_INIT, _ORIGINAL_WRAP_CODE_ASSIST, _ORIGINAL_ENSURE_PROJECT_CONTEXT
+  global _ORIGINAL_CREATE_OPENAI_CLIENT, _ORIGINAL_RESOLVE_RUNTIME_PROVIDER
+  global _ORIGINAL_RESOLVE_PROVIDER_CLIENT, _MODERN_RUNTIME_PATCHED
   if not _PATCHED:
     return False
   try:
-    from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
-    import agent.gemini_cloudcode_adapter as gca
-    if _ORIGINAL_INIT is not None:
-      GeminiCloudCodeClient.__init__ = _ORIGINAL_INIT
-    if _ORIGINAL_ENSURE_PROJECT_CONTEXT is not None:
-      GeminiCloudCodeClient._ensure_project_context = _ORIGINAL_ENSURE_PROJECT_CONTEXT
-    if _ORIGINAL_WRAP_CODE_ASSIST is not None:
-      gca.wrap_code_assist_request = _ORIGINAL_WRAP_CODE_ASSIST
+    if _MODERN_RUNTIME_PATCHED:
+      try:
+        import agent.agent_runtime_helpers as runtime_helpers
+        import agent.auxiliary_client as auxiliary_client
+        import hermes_cli.runtime_provider as runtime_provider
+        if _ORIGINAL_CREATE_OPENAI_CLIENT is not None:
+          runtime_helpers.create_openai_client = _ORIGINAL_CREATE_OPENAI_CLIENT
+        if _ORIGINAL_RESOLVE_RUNTIME_PROVIDER is not None:
+          runtime_provider.resolve_runtime_provider = _ORIGINAL_RESOLVE_RUNTIME_PROVIDER
+        if _ORIGINAL_RESOLVE_PROVIDER_CLIENT is not None:
+          auxiliary_client.resolve_provider_client = _ORIGINAL_RESOLVE_PROVIDER_CLIENT
+      except Exception:
+        pass
+    try:
+      from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
+      import agent.gemini_cloudcode_adapter as gca
+      if _ORIGINAL_INIT is not None:
+        GeminiCloudCodeClient.__init__ = _ORIGINAL_INIT
+      if _ORIGINAL_ENSURE_PROJECT_CONTEXT is not None:
+        GeminiCloudCodeClient._ensure_project_context = _ORIGINAL_ENSURE_PROJECT_CONTEXT
+      if _ORIGINAL_WRAP_CODE_ASSIST is not None:
+        gca.wrap_code_assist_request = _ORIGINAL_WRAP_CODE_ASSIST
+    except Exception:
+      pass
     _PATCHED = False
     _ORIGINAL_INIT = None
     _ORIGINAL_WRAP_CODE_ASSIST = None
     _ORIGINAL_ENSURE_PROJECT_CONTEXT = None
+    _ORIGINAL_CREATE_OPENAI_CLIENT = None
+    _ORIGINAL_RESOLVE_RUNTIME_PROVIDER = None
+    _ORIGINAL_RESOLVE_PROVIDER_CLIENT = None
+    _MODERN_RUNTIME_PATCHED = False
     logger.info("Antigravity interceptor uninstalled")
     return True
   except Exception as e:

@@ -1040,22 +1040,27 @@ def print_interceptor_status():
     # Check if Hermes adapter symbols are importable
     print()
     print("--- Hermes Integration ---")
-    try:
-        from agent.gemini_cloudcode_adapter import (
-            GeminiCloudCodeClient,
-            wrap_code_assist_request,
-            CODE_ASSIST_ENDPOINT,
-        )
-        print(f"  Adapter:   GeminiCloudCodeClient available")
-        print(f"  Endpoint:  {CODE_ASSIST_ENDPOINT}")
+    if health.get("modern_factory_transport_patched"):
+        print("  Runtime:   Hermes factory transport patched")
+        print("  Adapter:   Legacy Cloud Code adapter not required")
         adapter_ok = True
-    except ImportError as exc:
-        print(f"  Adapter:   NOT importable ({exc})")
-        print("  Impact:    Interceptor cannot install without the Hermes adapter")
-        adapter_ok = False
-    except Exception as exc:
-        print(f"  Adapter:   Error: {exc}")
-        adapter_ok = False
+    else:
+        try:
+            from agent.gemini_cloudcode_adapter import (
+                GeminiCloudCodeClient,
+                wrap_code_assist_request,
+                CODE_ASSIST_ENDPOINT,
+            )
+            print(f"  Adapter:   GeminiCloudCodeClient available")
+            print(f"  Endpoint:  {CODE_ASSIST_ENDPOINT}")
+            adapter_ok = True
+        except ImportError as exc:
+            print(f"  Adapter:   NOT importable ({exc})")
+            print("  Impact:    Interceptor needs Hermes factory hooks or the legacy adapter")
+            adapter_ok = False
+        except Exception as exc:
+            print(f"  Adapter:   Error: {exc}")
+            adapter_ok = False
 
     if adapter_ok and not installed:
         print()

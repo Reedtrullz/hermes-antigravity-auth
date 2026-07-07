@@ -45,13 +45,29 @@ def _load_file_credentials() -> tuple[str, str]:
   Missing, malformed, or non-object JSON files are treated as absent.
   """
   path = _credential_file_path()
+  fd = None
   try:
-    mode = stat.S_IMODE(path.stat().st_mode)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+      flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    stat_result = os.fstat(fd)
+    if not stat.S_ISREG(stat_result.st_mode):
+      return "", ""
+    mode = stat.S_IMODE(stat_result.st_mode)
     if mode & 0o077:
-      os.chmod(path, 0o600)
-    data = json.loads(path.read_text(encoding="utf-8"))
+      if hasattr(os, "fchmod"):
+        os.fchmod(fd, 0o600)
+      else:
+        os.chmod(path, 0o600)
+    with os.fdopen(fd, "r", encoding="utf-8") as f:
+      fd = None
+      data = json.load(f)
   except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
     return "", ""
+  finally:
+    if fd is not None:
+      os.close(fd)
 
   if not isinstance(data, dict):
     return "", ""
@@ -83,6 +99,8 @@ def write_oauth_credentials(client_id: str, client_secret: str, path: Path | Non
     raise MissingOAuthCredentialsError("Both client_id and client_secret are required.")
 
   target = path or _credential_file_path()
+  if target.is_symlink():
+    raise RuntimeError(f"Refusing to write OAuth credentials through symlink: {target}")
   target.parent.mkdir(parents=True, exist_ok=True)
   os.chmod(target.parent, 0o700)
   tmp_path = target.with_name(

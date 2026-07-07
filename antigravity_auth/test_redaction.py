@@ -130,3 +130,38 @@ class TestApiKeyRedaction(unittest.TestCase):
         self.assertNotIn("refresh-secret", rendered)
         self.assertNotIn("client-secret", rendered)
         self.assertIn("[REDACTED]", rendered)
+
+    def test_cookie_and_broad_secret_header_shapes_are_redacted(self):
+        from antigravity_auth.redaction import REDACTED, redact_secrets
+
+        raw = {
+            "Set-Cookie": "session=raw-cookie",
+            "headers": (
+                "Proxy-Authorization: proxy-secret\n"
+                "X-Api-Token: provider-token\n"
+                "X-Credential: provider-credential\n"
+                "X-Password: provider-password\n"
+                "Cookie: inline-cookie"
+            ),
+            "url": "https://example.test/?cookie=query-cookie&setCookie=query-set-cookie",
+            "body": '{"cookie":"json-cookie","set_cookie":"json-set-cookie"} cookie=form-cookie',
+        }
+
+        redacted = redact_secrets(raw)
+        rendered = str(redacted)
+
+        for secret in (
+            "raw-cookie",
+            "proxy-secret",
+            "provider-token",
+            "provider-credential",
+            "provider-password",
+            "inline-cookie",
+            "query-cookie",
+            "query-set-cookie",
+            "json-cookie",
+            "json-set-cookie",
+            "form-cookie",
+        ):
+            self.assertNotIn(secret, rendered)
+        self.assertEqual(redacted["Set-Cookie"], REDACTED)

@@ -110,6 +110,46 @@ class TestCredentials(unittest.TestCase):
       }, clear=True):
         self.assertEqual(resolve_oauth_credentials(), ("", ""))
 
+  @unittest.skipIf(os.name == "nt", "Windows symlink semantics differ from POSIX secret-file checks")
+  def test_symlinked_credentials_file_is_ignored_without_chmodding_target(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      target_path = Path(tmpdir) / "target-credentials.json"
+      target_path.write_text(json.dumps({
+        "client_id": "file-id",
+        "client_secret": "file-secret",
+      }), encoding="utf-8")
+      os.chmod(target_path, 0o644)
+
+      symlink_path = Path(tmpdir) / "antigravity-credentials.json"
+      try:
+        symlink_path.symlink_to(target_path)
+      except (OSError, NotImplementedError) as exc:
+        self.skipTest(f"symlink unavailable: {exc}")
+
+      with patch.dict("os.environ", {
+        "HERMES_HOME": tmpdir,
+      }, clear=True):
+        self.assertEqual(resolve_oauth_credentials(), ("", ""))
+
+      self.assertEqual(stat.S_IMODE(os.stat(target_path).st_mode), 0o644)
+
+  @unittest.skipIf(os.name == "nt", "Windows symlink semantics differ from POSIX secret-file checks")
+  def test_write_oauth_credentials_refuses_symlink_target(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      target_path = Path(tmpdir) / "target-credentials.json"
+      target_path.write_text("{}", encoding="utf-8")
+      path = Path(tmpdir) / "antigravity-credentials.json"
+      try:
+        path.symlink_to(target_path)
+      except (OSError, NotImplementedError) as exc:
+        self.skipTest(f"symlink unavailable: {exc}")
+
+      with self.assertRaisesRegex(RuntimeError, "symlink"):
+        write_oauth_credentials("client-id", "client-secret", path=path)
+
+      self.assertTrue(path.is_symlink())
+      self.assertEqual(target_path.read_text(encoding="utf-8"), "{}")
+
   def test_missing_both_env_and_file_returns_empty(self):
     with tempfile.TemporaryDirectory() as tmpdir:
       with patch.dict("os.environ", {"HERMES_HOME": tmpdir}, clear=True):

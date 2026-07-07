@@ -173,6 +173,45 @@ class TestHermesPluginRegister(unittest.TestCase):
     self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
     self.assertIn("gemini-3.5-flash-high", fake_models._PROVIDER_MODELS["google-gemini-cli"])
 
+  def test_provider_plugin_handles_three_field_provider_groups(self):
+    from collections import namedtuple
+
+    import antigravity_auth.hermes_provider_plugin as provider_mod
+
+    ProviderEntry = namedtuple("ProviderEntry", "slug label tui_desc")
+    fake_models = types.ModuleType("hermes_cli.models")
+    fake_models.ProviderEntry = ProviderEntry
+    fake_models._PROVIDER_MODELS = {"google-gemini-cli": ["old-model"]}
+    fake_models._PROVIDER_LABELS = {"google-gemini-cli": "Google Gemini (OAuth)"}
+    fake_models._PROVIDER_ALIASES = {}
+    fake_models.CANONICAL_PROVIDERS = [
+      ProviderEntry("gemini", "Google AI Studio", "Google AI Studio"),
+      ProviderEntry("google-gemini-cli", "Google Gemini (OAuth)", "Google Gemini via OAuth"),
+    ]
+    fake_models.PROVIDER_GROUPS = {
+      "google": ("Google Gemini", "Google AI Studio (API key)", ["gemini", "google-gemini-cli"]),
+    }
+    fake_models._SLUG_TO_GROUP = {
+      "gemini": "google",
+      "google-gemini-cli": "google",
+    }
+
+    fake_hermes_cli = types.ModuleType("hermes_cli")
+    fake_hermes_cli.models = fake_models
+
+    with patch.dict(sys.modules, {
+        "hermes_cli": fake_hermes_cli,
+        "hermes_cli.models": fake_models,
+    }), \
+        patch.object(provider_mod, "_set_oauth_env_from_credentials"):
+      provider_mod._patch_hermes_model_picker()
+
+    self.assertEqual(
+      fake_models.PROVIDER_GROUPS["google"],
+      ("Google Gemini", "Google AI Studio (API key)", ["gemini"]),
+    )
+    self.assertNotIn("google-gemini-cli", fake_models._SLUG_TO_GROUP)
+
   def test_provider_plugin_skips_picker_patch_when_private_symbols_missing(self):
     import antigravity_auth.hermes_provider_plugin as provider_mod
 
