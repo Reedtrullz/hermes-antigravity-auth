@@ -79,7 +79,10 @@ DEPRECATED_CLI_TOOLSETS = ("messaging", "moa")
 
 def _write_file(path: Path, content: str) -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
-  path.write_text(content, encoding="utf-8")
+  tmp = path.with_suffix(f".tmp.{os.getpid()}")
+  tmp.write_text(content, encoding="utf-8")
+  tmp.replace(path)
+  os.chmod(path, 0o600)
 
 
 def _existing_python(path: Path) -> Path | None:

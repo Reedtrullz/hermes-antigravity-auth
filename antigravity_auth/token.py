@@ -1,9 +1,21 @@
 """Access token refresh, expiry detection, and OAuth error parsing."""
+import threading
 import json
 import time
 import urllib.request
 import urllib.error
 from urllib.parse import urlencode
+
+_refresh_locks: dict[str, threading.Lock] = {}
+_refresh_locks_lock = threading.Lock()
+
+
+def _get_refresh_lock(email: str) -> threading.Lock:
+    """Return a per-account lock for serializing token refresh attempts."""
+    with _refresh_locks_lock:
+        if email not in _refresh_locks:
+            _refresh_locks[email] = threading.Lock()
+        return _refresh_locks[email]
 
 try:
     from ._http_utils import decompress_response as _decompress
@@ -345,6 +357,20 @@ def parse_oauth_error_payload(text: str | None) -> dict[str, str | None]:
 
 
 def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool = False) -> dict:
+    """Serialize concurrent refreshes for the same account, then delegate."""
+    email = str(auth.get("email") or "")
+    lock = _get_refresh_lock(email)
+    if not lock.acquire(blocking=True, timeout=30):
+        import logging
+        logging.getLogger(__name__).warning("Refresh lock timeout for %s; proceeding anyway", email)
+    try:
+        return _refresh_access_token_impl(auth, persist=persist, set_active=set_active)
+    finally:
+        if lock.locked():
+            lock.release()
+
+
+def _refresh_access_token_impl(auth: dict, *, persist: bool = False, set_active: bool = False) -> dict:
     old_refresh = auth.get("refresh", "")
     parts = parse_refresh_parts(old_refresh)
     if not parts.get("refreshToken"):
@@ -452,6 +478,20 @@ def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool 
     
     project_id = parts.get("projectId") or ""
     email = auth.get("email")
+
+    # Discover the Cloud Code Assist project if not already stored.
+    # The backend rejects requests without a valid project id (403 VALIDATION_REQUIRED).
+    if not project_id:
+        try:
+            from .oauth import discover_project_id
+            discovered = discover_project_id(access_token)
+            if discovered:
+                project_id = discovered
+                refreshed_parts["projectId"] = discovered
+                new_refresh_packed = format_refresh_parts(refreshed_parts)
+                updated_auth["refresh"] = new_refresh_packed
+        except Exception:
+            pass
     
     if persist:
         update_state = {"saw_accounts": False, "updated_any": False, "update_failed": False}
@@ -489,3 +529,29 @@ def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool 
                 pass
         
     return updated_auth
+
+
+def is_validation_required_error(status_code: int, body: str | None = None) -> bool:
+    """Check if an error is a VALIDATION_REQUIRED auth issue rather than rate limit."""
+    if status_code == 403:
+        if body and "VALIDATION_REQUIRED" in body:
+            return True
+        if body and "permission_denied" in body.lower():
+            return True
+    return False
+
+
+def classify_backend_status(status_code: int, body: str | None = None) -> str:
+    """Classify a backend HTTP status into an error category string.
+
+    Returns one of: 'auth', 'rate_limit', 'invalid_request', 'transport'.
+    """
+    if status_code == 429:
+        return "rate_limit"
+    if is_validation_required_error(status_code, body):
+        return "auth"
+    if status_code in (401, 403):
+        return "auth"
+    if 400 <= status_code < 500:
+        return "invalid_request"
+    return "transport"

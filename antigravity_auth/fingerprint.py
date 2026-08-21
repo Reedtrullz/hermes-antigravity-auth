@@ -8,7 +8,7 @@ import uuid
 from typing import Any
 
 from ._time_utils import now_ms
-from .constants import ANTIGRAVITY_VERSION_FALLBACK
+from .constants import ANTIGRAVITY_VERSION_FALLBACK, ide_user_agent
 
 
 PLATFORM_CHOICES = ["darwin", "win32"]
@@ -144,10 +144,8 @@ def build_fingerprint_headers(fingerprint: dict[str, Any] | None) -> dict[str, s
     return {}
 
   headers = {}
-  ua = fingerprint.get("userAgent", "")
-  if ua:
-    headers["User-Agent"] = ua
-  api_client = fingerprint.get("apiClient", "")
-  if api_client:
-    headers["X-Goog-Api-Client"] = api_client
+  # The real Antigravity IDE sends only User-Agent + Authorization for
+  # generateContent; extra headers (X-Goog-Api-Client, Client-Metadata)
+  # cause fingerprint mismatches and 403 VALIDATION_REQUIRED errors.
+  headers["User-Agent"] = ide_user_agent()
   return headers

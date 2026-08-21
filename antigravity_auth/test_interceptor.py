@@ -183,7 +183,7 @@ class TestRequestHook(unittest.TestCase):
         self.hook(r)
         ua = r.headers.get("User-Agent", "")
         self.assertNotIn("hermes-agent", ua)
-        self.assertIn("Client-Metadata", r.headers)
+        self.assertTrue(ua.startswith("antigravity/ide/"))
 
     def test_removes_authorization_when_no_account_selected(self):
         r = self._make_request()
@@ -853,8 +853,8 @@ class TestRequestHook(unittest.TestCase):
              patch("antigravity_auth.interceptor._select_request_account", return_value={"access": "a", "account_index": 0, "account": FakeAccount()}):
             _antigravity_request_hook(request)
 
-        self.assertEqual(request.headers["User-Agent"], "UA/account-0")
-        self.assertIn('"platform": "MACOS"', request.headers["Client-Metadata"])
+        self.assertTrue(request.headers["User-Agent"].startswith("antigravity/ide/"))
+        self.assertNotIn("Client-Metadata", request.headers)
 
     def test_request_hook_current_selected_account_fingerprint_does_not_generate_or_save(self):
         from antigravity_auth.interceptor import _antigravity_request_hook
@@ -897,8 +897,8 @@ class TestRequestHook(unittest.TestCase):
         generate.assert_not_called()
         build_headers.assert_not_called()
         self.assertEqual(fake_mgr.save_count, 0)
-        self.assertEqual(request.headers["User-Agent"], "UA/current")
-        self.assertEqual(request.headers["X-Goog-Api-Client"], "google-cloud-sdk vscode/1.96.0")
+        self.assertTrue(request.headers["User-Agent"].startswith("antigravity/ide/"))
+        self.assertNotIn("X-Goog-Api-Client", request.headers)
 
     def test_request_hook_missing_selected_account_fingerprint_generates_and_saves_once(self):
         from antigravity_auth.interceptor import _antigravity_request_hook
@@ -942,7 +942,7 @@ class TestRequestHook(unittest.TestCase):
         generate.assert_called_once_with()
         self.assertIs(account.fingerprint, generated)
         self.assertEqual(fake_mgr.save_count, 1)
-        self.assertEqual(request.headers["User-Agent"], "UA/generated")
+        self.assertTrue(request.headers["User-Agent"].startswith("antigravity/ide/"))
 
     def test_request_hook_updated_selected_account_fingerprint_saves_once(self):
         from antigravity_auth.interceptor import _antigravity_request_hook
@@ -984,7 +984,7 @@ class TestRequestHook(unittest.TestCase):
         self.assertIn("createdAt", account.fingerprint)
         self.assertIn("apiClient", account.fingerprint)
         self.assertEqual(fake_mgr.save_count, 1)
-        self.assertEqual(request.headers["User-Agent"], "UA/old-version")
+        self.assertTrue(request.headers["User-Agent"].startswith("antigravity/ide/"))
 
     def test_request_hook_removes_stale_authorization_when_selection_fails(self):
         from antigravity_auth.interceptor import _antigravity_request_hook

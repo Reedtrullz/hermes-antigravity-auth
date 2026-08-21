@@ -11,7 +11,7 @@ Originally forked from [opencode-antigravity-auth](https://github.com/NoeFabris/
 ## Build & Test Commands
 
 ```bash
-pip install -e ".[dev]"                    # Editable install with dev deps
+pip install -e ".[dev,yaml]"              # Editable install with dev deps
 python3 -m pytest antigravity_auth/ -v     # Run all Python tests
 python3 -m pytest antigravity_auth/test_config.py  # Single test file
 python3 -m pytest -k "test_name"           # Single test by name

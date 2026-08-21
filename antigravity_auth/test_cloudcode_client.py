@@ -100,7 +100,7 @@ class TestAntigravityCloudCodeClient(unittest.TestCase):
     request = captured[0]
     self.assertEqual(
       str(request.url),
-      "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
+        "https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent",
     )
     body = json.loads(request.content)
     self.assertEqual(body["project"], "project-1")

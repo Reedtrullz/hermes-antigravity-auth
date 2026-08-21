@@ -17,6 +17,9 @@ try:
         ANTIGRAVITY_SCOPES,
         ANTIGRAVITY_LOAD_ENDPOINTS,
         ANTIGRAVITY_ENDPOINT_FALLBACKS,
+        ANTIGRAVITY_ENDPOINT_PROD,
+        ANTIGRAVITY_IDE_VERSION,
+        ide_user_agent,
         GEMINI_CLI_HEADERS,
         get_antigravity_headers,
         require_credentials,
@@ -30,6 +33,9 @@ except ImportError:
         ANTIGRAVITY_SCOPES,
         ANTIGRAVITY_LOAD_ENDPOINTS,
         ANTIGRAVITY_ENDPOINT_FALLBACKS,
+        ANTIGRAVITY_ENDPOINT_PROD,
+        ANTIGRAVITY_IDE_VERSION,
+        ide_user_agent,
         GEMINI_CLI_HEADERS,
         get_antigravity_headers,
         require_credentials,
@@ -152,12 +158,10 @@ def make_get_request(url: str, headers: dict, timeout: int = 10) -> tuple[int, b
         return 500, str(e).encode("utf-8")
 
 def fetch_project_id(access_token: str) -> str:
-    antigravity_headers = get_antigravity_headers()
     load_headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
-        "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-        "Client-Metadata": antigravity_headers["Client-Metadata"],
+        "User-Agent": ide_user_agent(),
     }
     
     seen = set()
@@ -200,6 +204,57 @@ def fetch_project_id(access_token: str) -> str:
             continue
             
     return ""
+
+
+def onboard_user(access_token: str) -> str:
+    """Call onboardUser (with retry) to create and discover the CCA project."""
+    import time as _time
+
+    for _attempt in range(5):
+        req_payload = {
+            "tier_id": "free-tier",
+            "metadata": {
+                "ide_type": "ANTIGRAVITY",
+                "ide_name": "antigravity",
+                "ide_version": ANTIGRAVITY_IDE_VERSION,
+            },
+        }
+        data = json.dumps(req_payload).encode("utf-8")
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "*/*",
+            "Content-Type": "application/json",
+            "User-Agent": ide_user_agent(),
+        }
+        url = f"{ANTIGRAVITY_ENDPOINT_PROD}/v1internal:onboardUser"
+        status, resp_bytes = make_post_request(url, headers, data, timeout=15)
+        if status in (429, 500, 502, 503):
+            _time.sleep(2.0)
+            continue
+        if status != 200:
+            break
+        try:
+            payload = json.loads(resp_bytes.decode("utf-8", errors="ignore"))
+        except Exception:
+            break
+        if isinstance(payload, dict) and payload.get("done") is True:
+            response = payload.get("response")
+            if isinstance(response, dict):
+                pid = response.get("cloudaicompanionProject")
+                if isinstance(pid, str) and pid:
+                    return pid
+                if isinstance(pid, dict):
+                    inner = pid.get("id")
+                    if isinstance(inner, str) and inner:
+                        return inner
+            break
+        _time.sleep(2.0)
+    return ""
+
+
+def discover_project_id(access_token: str) -> str:
+    """Discover the CCA project for an access token (loadCodeAssist -> onboardUser fallback)."""
+    return fetch_project_id(access_token) or onboard_user(access_token)
 
 def calculate_token_expiry(request_time_ms: int, expires_in_seconds) -> int:
     try:

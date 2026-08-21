@@ -2,6 +2,23 @@
 
 All notable changes to hermes-antigravity-auth.
 
+## [1.8.0] — 2026-08-21
+
+### Added
+- Single-source packaging metadata via `antigravity_auth/_version.py`.
+- Runtime hardening for Antigravity auth diagnostics and wrapper drift detection.
+- Clean-install pipeline with source-archive smoke test in CI.
+- Selftest smoke command for offline verification.
+
+### Changed
+- Enforced canonical Hermes install path and tightened auth diagnostics.
+- Hardened quota check state handling.
+- Diagnosed installed antigravity wrappers for version drift.
+
+### Fixed
+- Hardened Antigravity auth runtime safety.
+- Hardened Hermes v0.18 Antigravity routing.
+
 ## [1.7.0] — 2026-05-31
 
 ### Added
