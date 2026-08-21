@@ -249,14 +249,14 @@ class TestResolveModelForHeaderStyle(unittest.TestCase):
         result = resolve_model_for_header_style(
             "antigravity-gemini-3.5-flash", "gemini-cli"
         )
-        self.assertEqual("gemini-3.5-flash-low", result)
+        self.assertEqual("gemini-3.7-flash-tiered", result)
 
     def test_gemini_cli_maps_3_5_flash_quality_aliases(self):
         expected = {
-            "gemini-3.5-flash-high": "gemini-3-flash-agent",
-            "gemini-3.5-flash-medium": "gemini-3.5-flash-low",
-            "gemini-3.5-flash-low": "gemini-3.5-flash-low",
-            "gemini-3.5-flash-minimal": "gemini-3.5-flash-low",
+            "gemini-3.5-flash-high": "gemini-3.7-flash-tiered",
+            "gemini-3.5-flash-medium": "gemini-3.7-flash-tiered",
+            "gemini-3.5-flash-low": "gemini-3.7-flash-tiered",
+            "gemini-3.5-flash-minimal": "gemini-3.7-flash-tiered",
         }
         for model, backend_model in expected.items():
             with self.subTest(model=model):

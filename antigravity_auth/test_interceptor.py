@@ -264,8 +264,8 @@ class TestRequestHook(unittest.TestCase):
             self.hook(request)
 
         body = json.loads(request.content)
-        self.assertEqual(body["model"], "gemini-3-flash-agent")
-        self.assertEqual(body["request"]["model"], "gemini-3-flash-agent")
+        self.assertEqual(body["model"], "gemini-3.7-flash-tiered")
+        self.assertEqual(body["request"]["model"], "gemini-3.7-flash-tiered")
         self.assertEqual(int(request.headers["Content-Length"]), len(request.content))
 
     def test_request_hook_selects_account_using_resolved_backend_model(self):
@@ -298,7 +298,7 @@ class TestRequestHook(unittest.TestCase):
             self.hook(request)
 
         select_account.assert_called_once()
-        self.assertEqual(select_account.call_args.args[0], "gemini-3-flash-agent")
+        self.assertEqual(select_account.call_args.args[0], "gemini-3.7-flash-tiered")
 
     def test_request_hook_applies_claude_transforms_for_hook_only_path(self):
         request = httpx.Request(

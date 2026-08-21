@@ -71,13 +71,13 @@ MODEL_NAME_MAP: dict[str, str] = {
     "antigravity-gemini-3.1-pro-preview": "gemini-3.1-pro",
     "antigravity-gemini-3.1-pro-high": "gemini-3.1-pro-high",
     "antigravity-gemini-3.1-pro-low": "gemini-3.1-pro-low",
-    "antigravity-gemini-3-flash": "gemini-3-flash-preview",
-    "antigravity-gemini-3-flash-preview": "gemini-3-flash-preview",
-    "antigravity-gemini-3.5-flash": GEMINI_35_FLASH_LOW_MODEL,
-    "antigravity-gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH_MODEL,
-    "antigravity-gemini-3.5-flash-medium": GEMINI_35_FLASH_LOW_MODEL,
-    "antigravity-gemini-3.5-flash-low": GEMINI_35_FLASH_LOW_MODEL,
-    "antigravity-gemini-3.5-flash-minimal": GEMINI_35_FLASH_LOW_MODEL,
+    "antigravity-gemini-3-flash": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3-flash-preview": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.5-flash": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.5-flash-high": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.5-flash-medium": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.5-flash-low": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.5-flash-minimal": GEMINI_37_FLASH_TIERED,
     "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
     "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
     "antigravity-gemini-3.7-flash": GEMINI_37_FLASH_TIERED,
@@ -96,12 +96,20 @@ MODEL_NAME_MAP: dict[str, str] = {
     "gemini-3.1-pro-preview": "gemini-3.1-pro",
     "gemini-3.1-pro-high": "gemini-3.1-pro-high",
     "gemini-3.1-pro-low": "gemini-3.1-pro-low",
-    "gemini-3-flash-preview": "gemini-3-flash-preview",
-    "gemini-3.5-flash": GEMINI_35_FLASH_LOW_MODEL,
-    "gemini-3.5-flash-high": GEMINI_35_FLASH_HIGH_MODEL,
-    "gemini-3.5-flash-medium": GEMINI_35_FLASH_LOW_MODEL,
-    "gemini-3.5-flash-low": GEMINI_35_FLASH_LOW_MODEL,
-    "gemini-3.5-flash-minimal": GEMINI_35_FLASH_LOW_MODEL,
+    "gemini-3-flash-preview": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash-low": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash-medium": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash-high": GEMINI_37_FLASH_TIERED,
+    "gemini-3.7-flash": GEMINI_37_FLASH_TIERED,
+    "gemini-3.7-flash-high": GEMINI_37_FLASH_TIERED,
+    "gemini-3.7-flash-medium": GEMINI_37_FLASH_TIERED,
+    "gemini-3.7-flash-low": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-high": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-medium": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-low": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-minimal": GEMINI_37_FLASH_TIERED,
     "gemini-2.5-flash": "gemini-2.5-flash",
     "gemini-2.5-pro": "gemini-2.5-pro",
     "claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
@@ -133,8 +141,6 @@ def extract_model_from_url(url: str) -> str | None:
 
 def resolve_model_for_header_style(model: str, header_style: HeaderStyle) -> str:
   mapped = MODEL_NAME_MAP.get(model, model)
-  if mapped not in MODEL_NAME_MAP.values() and model in _RETIRED_FLASH_ALIASES:
-    return _RETIRED_FLASH_ALIASES[model]
   if header_style == "gemini-cli" and mapped.startswith("antigravity-"):
     return mapped[len("antigravity-"):]
   return mapped

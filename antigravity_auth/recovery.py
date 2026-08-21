@@ -59,7 +59,13 @@ def detect_error_type(error: Any) -> RecoveryErrorType:
     and "found" in message
   )
 
-  if "tool_use" in message and "tool_result" in message:
+  if "tool_use" in message and "tool_result" in message and (
+    "missing" in message
+    or "has no matching" in message
+    or "without corresponding" in message
+    or "not found" in message
+    or "must have" in message
+  ):
     return "tool_result_missing"
 
   if (
@@ -67,8 +73,10 @@ def detect_error_type(error: Any) -> RecoveryErrorType:
     and (
       "first block" in message
       or "must start with" in message
+      or "must be first" in message
       or "preceeding" in message
       or "preceding" in message
+      or "precede" in message
       or has_expected_found_thinking_order
     )
   ):

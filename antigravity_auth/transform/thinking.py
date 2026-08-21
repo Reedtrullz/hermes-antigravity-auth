@@ -15,7 +15,7 @@ def is_thinking_part(part: dict) -> bool:
   return (
     part.get("thought") is True
     or part.get("type") in ("thinking", "redacted_thinking", "reasoning")
-    or part.get("thinking") is not None
+    or (part.get("thinking") is not None and part["thinking"])
   )
 
 

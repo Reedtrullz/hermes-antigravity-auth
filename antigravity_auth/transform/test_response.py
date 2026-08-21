@@ -703,7 +703,7 @@ class TestTransformAntigravityResponse(unittest.TestCase):
         error_body = json.dumps({
             "error": {
                 "code": 400,
-                "message": "messages.3.content.tool_use without immediately after tool_result"
+                "message": "messages.3.content.tool_use without corresponding tool_result"
             }
         })
         body, extra_headers, error = transform_antigravity_response(

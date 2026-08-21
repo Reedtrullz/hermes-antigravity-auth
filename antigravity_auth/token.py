@@ -360,13 +360,14 @@ def refresh_access_token(auth: dict, *, persist: bool = False, set_active: bool 
     """Serialize concurrent refreshes for the same account, then delegate."""
     email = str(auth.get("email") or "")
     lock = _get_refresh_lock(email)
-    if not lock.acquire(blocking=True, timeout=30):
+    acquired = lock.acquire(blocking=True, timeout=30)
+    if not acquired:
         import logging
         logging.getLogger(__name__).warning("Refresh lock timeout for %s; proceeding anyway", email)
     try:
         return _refresh_access_token_impl(auth, persist=persist, set_active=set_active)
     finally:
-        if lock.locked():
+        if acquired:
             lock.release()
 
 

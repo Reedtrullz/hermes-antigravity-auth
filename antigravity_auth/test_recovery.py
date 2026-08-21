@@ -13,7 +13,7 @@ from antigravity_auth.recovery import (
 
 class TestDetectErrorType(unittest.TestCase):
     def test_tool_result_missing(self):
-        msg = "Some error about tool_use and tool_result being wrong"
+        msg = "Some error about tool_use without corresponding tool_result"
         self.assertEqual(detect_error_type(msg), "tool_result_missing")
 
     def test_tool_result_missing_dict(self):
@@ -76,14 +76,14 @@ class TestDetectErrorType(unittest.TestCase):
 
     def test_case_insensitivity(self):
         self.assertEqual(
-            detect_error_type("TOOL_USE and TOOL_RESULT mismatch"),
+            detect_error_type("TOOL_USE without corresponding TOOL_RESULT"),
             "tool_result_missing",
         )
 
 
 class TestIsRecoverableError(unittest.TestCase):
     def test_recoverable_error(self):
-        self.assertTrue(is_recoverable_error("tool_use tool_result"))
+        self.assertTrue(is_recoverable_error("tool_use without corresponding tool_result"))
 
     def test_non_recoverable_error(self):
         self.assertFalse(is_recoverable_error("random error"))

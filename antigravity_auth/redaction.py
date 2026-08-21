@@ -61,6 +61,10 @@ _HEADER_SECRET_RE = re.compile(
   r"(?im)(^|[ \t])((?:authorization|proxy-authorization|cookie|set-cookie|[\w-]*(?:api[-_]?key|api[-_]?token|token|secret|credential|password)[\w-]*)\s*:\s*)[^\r\n]+"
 )
 
+_GOOGLE_TOKEN_RE = re.compile(
+    r"(ya29\.[A-Za-z0-9._~-]{10,}|GOCSPX-[A-Za-z0-9._~-]{10,}|1//[A-Za-z0-9._~-]{10,})"
+)
+
 
 def _is_secret_key(key: Any) -> bool:
   normalized = str(key).replace("-", "_").lower()
@@ -86,6 +90,7 @@ def redact_secret_text(text: str) -> str:
   redacted = _JSON_SECRET_RE.sub(lambda m: m.group(1) + REDACTED + m.group(2), redacted)
   redacted = _PYTHON_REPR_SECRET_RE.sub(lambda m: m.group(1) + REDACTED + m.group(2), redacted)
   redacted = _FORM_SECRET_RE.sub(lambda m: f"{m.group(1)}={REDACTED}", redacted)
+  redacted = _GOOGLE_TOKEN_RE.sub(REDACTED, redacted)
   return redacted
 
 

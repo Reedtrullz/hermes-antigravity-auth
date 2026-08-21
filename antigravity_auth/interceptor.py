@@ -1045,14 +1045,28 @@ def _antigravity_response_hook(response: httpx.Response) -> None:
 
     if response.status_code == 403:
         try:
+            response.read()
+            body_text = response.text
             from .accounts.manager import get_or_create_global_manager
+            from .verification import extract_verification_error_details
             from .accounts.quota import compute_soft_quota_cache_ttl_ms
             mgr = get_or_create_global_manager()
             active = _response_account_for_request(mgr, request_extensions, family)
             if active:
                 import time
                 active.cooling_down_until = (time.time() + 86400) * 1000
-                active.cooldown_reason = "auth-failure"
+                verification = extract_verification_error_details(body_text or "")
+                is_validation_required = bool(verification.get("validationRequired") or verification.get("validation_required"))
+                active.cooldown_reason = "validation-required" if is_validation_required else "auth-failure"
+                if is_validation_required:
+                    verify_url = verification.get("verifyUrl") or verification.get("url") or ""
+                    if verify_url and hasattr(active, "verification_url"):
+                        active.verification_url = verify_url
+                        active.verification_required = True
+                    logger.warning(
+                        "Account %s requires Google account verification. Open this URL to re-authorize: %s",
+                        getattr(active, "email", "unknown"), verify_url,
+                    )
                 if not _persist_managed_account_state(active, family=family):
                     try:
                         mgr.save_to_disk()
