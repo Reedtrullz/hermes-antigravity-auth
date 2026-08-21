@@ -280,6 +280,10 @@ class TestDoctor(unittest.TestCase):
         self.assertIn("set-credentials", row.fix)
 
     def test_doctor_warns_when_active_cli_toolsets_are_unknown(self):
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("pyyaml not installed")
         from pathlib import Path
         from antigravity_auth.doctor import _check_config
 

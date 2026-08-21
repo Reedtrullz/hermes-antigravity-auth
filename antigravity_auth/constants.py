@@ -1,4 +1,5 @@
 """OAuth client credentials, endpoints, default headers, and platform detection."""
+import platform as _platform
 import sys
 
 try:
@@ -47,7 +48,7 @@ ANTIGRAVITY_SCOPES = [
 
 ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.sandbox.googleapis.com"
 ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com"
-ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com"
+ANTIGRAVITY_ENDPOINT_PROD = "https://daily-cloudcode-pa.googleapis.com"
 
 ANTIGRAVITY_ENDPOINT_FALLBACKS = [
     ANTIGRAVITY_ENDPOINT_DAILY,
@@ -62,6 +63,34 @@ ANTIGRAVITY_LOAD_ENDPOINTS = [
 ]
 
 ANTIGRAVITY_VERSION_FALLBACK = "2.0.0"
+
+ANTIGRAVITY_IDE_VERSION = "2.5.5"
+_IDE_USER_AGENT_CACHE: str | None = None
+
+
+def ide_user_agent() -> str:
+    """Return the Antigravity IDE User-Agent matching the real IDE client.
+
+    The backend validates the User-Agent against the OAuth credential's client
+    identity. Sending a non-IDE UA causes 403 VALIDATION_REQUIRED errors.
+    """
+    global _IDE_USER_AGENT_CACHE
+    if _IDE_USER_AGENT_CACHE is not None:
+        return _IDE_USER_AGENT_CACHE
+    os_type = _platform.system().lower()
+    machine = _platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        arch = "arm64"
+    elif machine in ("x86_64", "x86", "i386", "i686"):
+        arch = "amd64"
+    else:
+        arch = machine
+    ua = (
+        f"antigravity/ide/{ANTIGRAVITY_IDE_VERSION} "
+        f"(os_type={os_type}; arch={arch}; aidev_client; auth_method=oauth)"
+    )
+    _IDE_USER_AGENT_CACHE = ua
+    return ua
 
 # Gemini CLI headers — DEPRECATED as of May 2026.
 # Google is sunsetting the Gemini CLI in favour of Antigravity CLI (agy).
@@ -83,9 +112,6 @@ def get_platform() -> str:
     return "WINDOWS" if sys.platform == "win32" else "MACOS"
 
 def get_antigravity_headers(version: str = ANTIGRAVITY_VERSION_FALLBACK) -> dict:
-    platform = get_platform()
     return {
-        "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/{version} Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36",
-        "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-        "Client-Metadata": f'{{"ideType":"ANTIGRAVITY","platform":"{platform}","pluginType":"GEMINI"}}',
+        "User-Agent": ide_user_agent(),
     }

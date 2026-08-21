@@ -18,13 +18,14 @@ classifiers = [
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "httpx>=0.28",
+  "httpx>=0.28,<1.0",
   # pyyaml is optional - config falls back to defaults if not installed
 ]
 [project.optional-dependencies]
-yaml = ["pyyaml>=6.0"]
+yaml = ["pyyaml>=6.0,<7.0"]
 dev = ["pytest>=8", "pytest-cov>=5"]
 
 [project.entry-points."hermes_agent.plugins"]
@@ -35,6 +36,11 @@ hermes-antigravity-install = "antigravity_auth.install_plugins:main"
 
 [tool.setuptools.packages.find]
 include = ["antigravity_auth*"]
+exclude = [
+  "antigravity_auth.test_*",
+  "antigravity_auth.accounts.test_*",
+  "antigravity_auth.transform.test_*",
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "antigravity_auth._version.__version__"}

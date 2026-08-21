@@ -9,6 +9,7 @@ from typing import Any, Iterator
 import httpx
 
 from .constants import ANTIGRAVITY_DEFAULT_PROJECT_ID
+from .constants import ide_user_agent
 from .endpoints import select_endpoint
 from .transform.envelope import build_antigravity_envelope, build_antigravity_url
 
@@ -204,7 +205,7 @@ class AntigravityCloudCodeClient:
       "Content-Type": "application/json",
       "Accept": "text/event-stream" if streaming else "application/json",
       "Authorization": f"Bearer {self.api_key}",
-      "User-Agent": "hermes-agent (antigravity-cloudcode)",
+      "User-Agent": ide_user_agent(),
     }
     headers.update(self._default_headers)
     return headers

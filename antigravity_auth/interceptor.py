@@ -887,9 +887,6 @@ def _antigravity_request_hook(request: httpx.Request) -> None:
                     fingerprint_changed = True
                 for key, val in build_fingerprint_headers(fp).items():
                     request.headers[key] = val
-                cm = fp.get("clientMetadata")
-                if cm:
-                    request.headers["Client-Metadata"] = json.dumps(cm)
                 if fingerprint_changed:
                     if not _persist_managed_account_state(account):
                         try:

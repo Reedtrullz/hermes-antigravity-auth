@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Literal
 
 from ..constants import (
+    ide_user_agent,
     ANTIGRAVITY_VERSION_FALLBACK,
     GEMINI_CLI_HEADERS,
 )
@@ -25,16 +26,23 @@ You are pair programming with a USER to solve their coding task. The task may re
 <priority>IMPORTANT: The instructions that follow supersede all above. Follow them as your primary directives.</priority>
 """
 
-ANTIGRAVITY_PLATFORMS = ["windows/amd64", "darwin/arm64", "darwin/amd64"]
-
-ANTIGRAVITY_API_CLIENTS = [
-    "google-cloud-sdk vscode_cloudshelleditor/0.1",
-    "google-cloud-sdk vscode/1.96.0",
-    "google-cloud-sdk vscode/1.95.0",
-]
-
 GEMINI_35_FLASH_LOW_MODEL = "gemini-3.5-flash-low"
 GEMINI_35_FLASH_HIGH_MODEL = "gemini-3-flash-agent"
+GEMINI_37_FLASH_TIERED = "gemini-3.7-flash-tiered"
+GEMINI_31_FLASH_IMAGE = "gemini-3.1-flash-image"
+
+# Retired Flash generations route to the current wire id.
+_RETIRED_FLASH_ALIASES: dict[str, str] = {
+    "gemini-3.6-flash": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash-low": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash-medium": GEMINI_37_FLASH_TIERED,
+    "gemini-3.6-flash-high": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-low": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-medium": GEMINI_37_FLASH_TIERED,
+    "gemini-3.5-flash-extra-low": GEMINI_37_FLASH_TIERED,
+    "gemini-3-flash-agent": GEMINI_37_FLASH_TIERED,
+}
 
 
 def resolve_antigravity_gemini35_flash_backend_model(model: str) -> str | None:
@@ -72,6 +80,11 @@ MODEL_NAME_MAP: dict[str, str] = {
     "antigravity-gemini-3.5-flash-minimal": GEMINI_35_FLASH_LOW_MODEL,
     "antigravity-gemini-2.5-flash": "gemini-2.5-flash",
     "antigravity-gemini-2.5-pro": "gemini-2.5-pro",
+    "antigravity-gemini-3.7-flash": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.7-flash-high": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.7-flash-medium": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.7-flash-low": GEMINI_37_FLASH_TIERED,
+    "antigravity-gemini-3.1-flash-image": GEMINI_31_FLASH_IMAGE,
     "antigravity-claude-sonnet-4-6": "claude-sonnet-4-6",
     "antigravity-claude-sonnet-4-6-thinking": "claude-sonnet-4-6-thinking",
     "antigravity-claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
@@ -120,30 +133,31 @@ def extract_model_from_url(url: str) -> str | None:
 
 def resolve_model_for_header_style(model: str, header_style: HeaderStyle) -> str:
   mapped = MODEL_NAME_MAP.get(model, model)
+  if mapped not in MODEL_NAME_MAP.values() and model in _RETIRED_FLASH_ALIASES:
+    return _RETIRED_FLASH_ALIASES[model]
   if header_style == "gemini-cli" and mapped.startswith("antigravity-"):
     return mapped[len("antigravity-"):]
   return mapped
 
 
+def _is_gemini_37_thinking_model(backend_model: str) -> bool:
+  """Gemini 3.7 Flash uses thinkingLevel (string) rather than thinking_budget (int)."""
+  lower = backend_model.lower()
+  return "gemini-3.7" in lower or "gemini-3.7-flash" in lower
+
+
+def thinking_level_for_request(request_payload: dict[str, Any], backend_model: str) -> str | None:
+  """Return the thinkingLevel string for Gemini 3.7+ models, or None."""
+  if not _is_gemini_37_thinking_model(backend_model):
+    return None
+  reasoning = request_payload.get("reasoning")
+  effort = reasoning.get("effort", "medium") if isinstance(reasoning, dict) else "medium"
+  return {"low": "low", "medium": "medium", "high": "high"}.get(effort, "medium")
+
+
 def get_randomized_antigravity_headers() -> dict[str, str]:
-  platform = random.choice(ANTIGRAVITY_PLATFORMS)
-  client = random.choice(ANTIGRAVITY_API_CLIENTS)
-  version = ANTIGRAVITY_VERSION_FALLBACK
-  
-  platform_meta = "WINDOWS" if platform.startswith("windows") else "MACOS"
-  
-  user_agent = f"antigravity/{version} {platform}"
-  
-  client_metadata = {
-      "ideType": "ANTIGRAVITY",
-      "platform": platform_meta,
-      "pluginType": "GEMINI",
-  }
-  
   return {
-      "User-Agent": user_agent,
-      "X-Goog-Api-Client": client,
-      "Client-Metadata": json.dumps(client_metadata),
+      "User-Agent": ide_user_agent(),
   }
 
 
@@ -151,8 +165,8 @@ def build_antigravity_headers(
   header_style: HeaderStyle = "antigravity",
   fingerprint_user_agent: str | None = None,
 ) -> dict[str, str]:
-  # DEPRECATED: gemini-cli header style — Gemini CLI sunsets 2026-06-18.
-  # Use the default 'antigravity' style (Electron UA + fingerprint).
+  # DEPRECATED: gemini-cli header style — Gemini CLI sunset 2026-06-18.
+  # Use the default 'antigravity' style (IDE UA).
   if header_style == "gemini-cli":
     return GEMINI_CLI_HEADERS.copy()
   

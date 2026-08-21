@@ -212,7 +212,10 @@ class TestHermesMigrationIntegration(unittest.TestCase):
             ).exists())
 
     def test_install_plugins_removes_deprecated_cli_toolsets(self):
-        import yaml
+        try:
+            import yaml  # noqa: F401
+        except ImportError:
+            self.skipTest("pyyaml not installed")
         from antigravity_auth.install_plugins import install_plugins
 
         with tempfile.TemporaryDirectory() as tmpdir:

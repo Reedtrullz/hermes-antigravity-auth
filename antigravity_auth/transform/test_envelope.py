@@ -181,13 +181,11 @@ class TestBuildAntigravityHeaders(unittest.TestCase):
         self.assertIn("google-api-nodejs-client", headers["User-Agent"])
         self.assertEqual("gl-node/22.17.0", headers.get("X-Goog-Api-Client"))
 
-    def test_antigravity_style_has_client_metadata_json(self):
+    def test_antigravity_style_has_ide_user_agent_only(self):
         headers = build_antigravity_headers(header_style="antigravity")
-        self.assertIn("Client-Metadata", headers)
-        metadata = json.loads(headers["Client-Metadata"])
-        self.assertEqual("ANTIGRAVITY", metadata["ideType"])
-        self.assertIn("platform", metadata)
-        self.assertEqual("GEMINI", metadata["pluginType"])
+        self.assertNotIn("Client-Metadata", headers)
+        self.assertNotIn("X-Goog-Api-Client", headers)
+        self.assertTrue(headers["User-Agent"].startswith("antigravity/ide/"))
 
     def test_antigravity_style_has_user_agent(self):
         headers = build_antigravity_headers(header_style="antigravity")

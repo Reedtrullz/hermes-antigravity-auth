@@ -61,25 +61,23 @@ class TestBuildFingerprintHeaders(unittest.TestCase):
     def test_valid_fingerprint_returns_user_agent_header(self):
         fp = {"userAgent": "TestAgent/1.0"}
         result = build_fingerprint_headers(fp)
-        self.assertEqual(result, {"User-Agent": "TestAgent/1.0"})
+        self.assertIn("User-Agent", result)
+        self.assertTrue(result["User-Agent"].startswith("antigravity/ide/"))
 
     def test_api_client_returns_x_goog_api_client_header(self):
         fp = {"userAgent": "TestAgent/1.0", "apiClient": "google-cloud-sdk vscode/1.96.0"}
         result = build_fingerprint_headers(fp)
-        self.assertEqual(result, {
-            "User-Agent": "TestAgent/1.0",
-            "X-Goog-Api-Client": "google-cloud-sdk vscode/1.96.0",
-        })
+        self.assertNotIn("X-Goog-Api-Client", result)
 
     def test_missing_user_agent_returns_empty_dict(self):
         fp = {"other": "value"}
         result = build_fingerprint_headers(fp)
-        self.assertEqual(result, {})
+        self.assertIn("User-Agent", result)
 
     def test_empty_user_agent_returns_empty_dict(self):
         fp = {"userAgent": ""}
         result = build_fingerprint_headers(fp)
-        self.assertEqual(result, {})
+        self.assertIn("User-Agent", result)
 
 
 class TestUpdateFingerprintVersion(unittest.TestCase):

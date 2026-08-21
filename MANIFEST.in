@@ -2,4 +2,5 @@
 # Defense-in-depth: setup.py packaging_guard also blocks builds when
 # antigravity_auth/_credentials.py exists, but this catches bypass paths.
 exclude antigravity_auth/_credentials.py
+recursive-exclude antigravity_auth *test*.py
 global-exclude *.py[cod]
