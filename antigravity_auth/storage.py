@@ -9,15 +9,36 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-# Try to dynamically import the lock from hermes_cli.auth, fallback to a local Thread Lock
-try:
-    from hermes_cli.auth import _auth_store_lock as _hermes_lock
-    if hasattr(_hermes_lock, "__enter__"):
-        _auth_store_lock = _hermes_lock
-    else:
-        _auth_store_lock = threading.Lock()
-except ImportError:
-    _auth_store_lock = threading.Lock()
+_fallback_auth_lock = threading.Lock()
+
+
+class _AuthStoreLockWrapper:
+    """Lazy wrapper around hermes_cli.auth._auth_store_lock.
+
+    Avoids importing hermes_cli.auth at storage.py module load time, which
+    can freeze PROVIDER_REGISTRY prematurely during Hermes provider discovery.
+    """
+
+    def __enter__(self):
+        try:
+            from hermes_cli.auth import _auth_store_lock as _hermes_lock
+            if callable(_hermes_lock):
+                self._cm = _hermes_lock()
+                return self._cm.__enter__()
+            elif hasattr(_hermes_lock, "__enter__"):
+                self._cm = _hermes_lock
+                return self._cm.__enter__()
+        except Exception:
+            pass
+        self._cm = _fallback_auth_lock
+        return self._cm.__enter__()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        cm = getattr(self, "_cm", _fallback_auth_lock)
+        return cm.__exit__(exc_type, exc_val, exc_tb)
+
+
+_auth_store_lock = _AuthStoreLockWrapper()
 
 _accounts_store_lock = threading.RLock()
 _process_lock_warning_emitted = False
