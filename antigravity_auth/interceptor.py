@@ -177,6 +177,13 @@ def _is_antigravity_response_request(response: httpx.Response) -> bool:
 def _replace_request_json(request: httpx.Request, body: dict[str, Any]) -> None:
   content = json.dumps(body, separators=(",", ":")).encode("utf-8")
   request._content = content
+  # httpx sends the pre-encoded body via request.stream, not _content.  Keep
+  # the stream, Content-Length header, and cached content in sync, or h11
+  # fails the send with "Too little data for declared Content-Length"
+  # whenever the rewritten body is larger than the original.
+  from httpx._content import ByteStream
+
+  request.stream = ByteStream(content)
   request.headers["Content-Length"] = str(len(content))
 
 
