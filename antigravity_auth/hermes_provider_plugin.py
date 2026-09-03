@@ -373,6 +373,46 @@ except Exception as exc:
     "Hermes may still route through provider profile registration; rerun doctor inside Hermes.",
   )
 
+
+def _register_picker_overlay() -> bool:
+  """Register google-gemini-cli in HERMES_OVERLAYS for the /model picker.
+
+  Hermes 0.21 enumerates picker providers from
+  ``hermes_cli.providers.HERMES_OVERLAYS``. Older Hermes builds neither
+  have that table nor need this entry (they render via CANONICAL_PROVIDERS,
+  patched above), so a missing table is a clean no-op — never an import
+  crash. Returns True when the overlay row is present afterwards.
+  """
+  try:
+    from hermes_cli.providers import HERMES_OVERLAYS as _overlays
+    from hermes_cli.providers import HermesOverlay as _overlay_cls
+  except Exception:
+    return False
+  try:
+    if "google-gemini-cli" not in _overlays:
+      _overlays["google-gemini-cli"] = _overlay_cls(
+        transport="openai_chat",
+        auth_type="oauth_external",
+        base_url_override="cloudcode-pa://google",
+      )
+    _record(
+      "PASS",
+      "model picker overlay",
+      "registered google-gemini-cli in HERMES_OVERLAYS for the /model picker",
+    )
+    return True
+  except Exception as exc:
+    _record(
+      "WARN",
+      "model picker overlay",
+      f"could not register HERMES_OVERLAYS entry: {exc}",
+      "The /model picker may not show the Google Antigravity row on this Hermes build.",
+    )
+    return False
+
+
+_register_picker_overlay()
+
 _interceptor_installed = False
 
 try:
