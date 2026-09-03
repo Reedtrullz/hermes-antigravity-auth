@@ -149,6 +149,17 @@ ANTIGRAVITY_MODELS = (
   "claude-opus-4-6-thinking",
   "claude-sonnet-4-6-thinking",
   "claude-sonnet-4-6",
+  # Gemini 3.8 Flash tiered variants (verified live 2026-09-03 via the
+  # Antigravity backend; bare "gemini-3.8-flash" 404s and is excluded)
+  "gemini-3.8-flash-high",
+  "gemini-3.8-flash-medium",
+  "gemini-3.8-flash-low",
+  # Gemini 3.7 Flash (verified live 2026-09-03; routes to the
+  # gemini-3.7-flash-tiered backend)
+  "gemini-3.7-flash",
+  "gemini-3.7-flash-high",
+  "gemini-3.7-flash-medium",
+  "gemini-3.7-flash-low",
   # Gemini 3.5 Flash aliases
   "gemini-3.5-flash",
   "gemini-3.5-flash-high",
