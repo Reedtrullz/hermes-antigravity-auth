@@ -4,7 +4,6 @@ import hashlib
 import base64
 import json
 import time
-import sys
 import traceback
 import urllib.request
 import urllib.error
@@ -157,6 +156,25 @@ def make_get_request(url: str, headers: dict, timeout: int = 10) -> tuple[int, b
     except Exception as e:
         return 500, str(e).encode("utf-8")
 
+def load_code_assist_payload() -> dict:
+    """Request body for ``v1internal:loadCodeAssist`` project discovery.
+
+    Google's ``ClientMetadata`` proto rejects per-OS values such as
+    ``"MACOS"``/``"WINDOWS"`` (HTTP 400 ``INVALID_ARGUMENT``), which made
+    project discovery silently fail on macOS. The reference
+    opencode-antigravity-auth implementation sends ``PLATFORM_UNSPECIFIED``,
+    which the API accepts on every platform — so the payload is identical
+    on Linux, macOS and Windows by design.
+    """
+    return {
+        "metadata": {
+            "ideType": "ANTIGRAVITY",
+            "platform": "PLATFORM_UNSPECIFIED",
+            "pluginType": "GEMINI",
+        }
+    }
+
+
 def fetch_project_id(access_token: str) -> str:
     load_headers = {
         "Authorization": f"Bearer {access_token}",
@@ -174,13 +192,7 @@ def fetch_project_id(access_token: str) -> str:
     for base_endpoint in load_endpoints:
         try:
             url = f"{base_endpoint}/v1internal:loadCodeAssist"
-            payload = {
-                "metadata": {
-                    "ideType": "ANTIGRAVITY",
-                    "platform": "WINDOWS" if sys.platform == "win32" else "MACOS",
-                    "pluginType": "GEMINI",
-                }
-            }
+            payload = load_code_assist_payload()
             data = json.dumps(payload).encode("utf-8")
             status, resp_bytes = make_post_request(url, load_headers, data, timeout=10)
             
