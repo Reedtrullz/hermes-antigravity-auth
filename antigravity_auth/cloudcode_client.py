@@ -181,11 +181,8 @@ class AntigravityCloudCodeClient:
     return self._endpoint
 
   def close(self) -> None:
+    self._http.close()
     self.is_closed = True
-    try:
-      self._http.close()
-    except Exception:
-      pass
 
   def __enter__(self) -> "AntigravityCloudCodeClient":
     return self

@@ -9,15 +9,13 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
-# Try to dynamically import the lock from hermes_cli.auth, fallback to a local Thread Lock
+_auth_store_lock: contextlib.AbstractContextManager[bool | None] | Callable[..., contextlib.AbstractContextManager[bool | None]]
+# Missing Hermes uses the local lock plus the plugin's process lock.
 try:
     from hermes_cli.auth import _auth_store_lock as _hermes_lock
-    if hasattr(_hermes_lock, "__enter__"):
-        _auth_store_lock = _hermes_lock
-    else:
-        _auth_store_lock = threading.Lock()
+    _auth_store_lock = _hermes_lock
 except ImportError:
-    _auth_store_lock = threading.Lock()
+    _auth_store_lock = threading.RLock()
 
 _accounts_store_lock = threading.RLock()
 _process_lock_warning_emitted = False
@@ -76,6 +74,9 @@ def _acquire_process_file_lock(lock_file: Any, lock_path: Path) -> Callable[[], 
     """
     try:
         import fcntl
+    except ImportError as fcntl_exc:
+        fcntl_reason = fcntl_exc
+    else:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         released = False
 
@@ -90,12 +91,9 @@ def _acquire_process_file_lock(lock_file: Any, lock_path: Path) -> Callable[[], 
                 pass
 
         return unlock_fcntl
-    except Exception as fcntl_exc:
-        fcntl_reason = fcntl_exc
-
     try:
         import msvcrt
-    except Exception as msvcrt_exc:
+    except ImportError as msvcrt_exc:
         _warn_process_lock_unavailable_once(
             lock_path,
             f"fcntl unavailable ({fcntl_reason}); msvcrt unavailable ({msvcrt_exc})",
@@ -438,8 +436,11 @@ def sync_token_to_auth_json(
     path = get_auth_json_path()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    with _process_file_lock(path.with_suffix(".lock")):
-        with _auth_store_lock:
+    lock = _auth_store_lock(target_path=path) if callable(_auth_store_lock) else _auth_store_lock
+    # Modern Hermes factories already own this path's cross-process lock.
+    process_lock = contextlib.nullcontext() if callable(_auth_store_lock) else _process_file_lock(path.with_suffix(".lock"))
+    with process_lock:
+        with lock:
             current_epoch_ms = int(time.time() * 1000)
             tmp_path = path.with_suffix(f".json.{os.getpid()}.{secrets.token_hex(4)}.tmp")
 
@@ -506,7 +507,8 @@ def get_active_token_from_auth_json() -> dict[str, str]:
     if not path.exists():
         return default_res
 
-    with _auth_store_lock:
+    lock = _auth_store_lock(target_path=path) if callable(_auth_store_lock) else _auth_store_lock
+    with lock:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)

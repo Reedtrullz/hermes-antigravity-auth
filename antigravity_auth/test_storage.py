@@ -1,9 +1,12 @@
 import builtins
+import contextlib
+import importlib.util
 import json
 import os
 import sys
 import tempfile
 import types
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,6 +24,126 @@ from antigravity_auth.storage import (
 
 
 class TestStorage(unittest.TestCase):
+    def _storage_with_lock(self, lock):
+        from antigravity_auth import storage
+
+        auth = types.ModuleType("hermes_cli.auth")
+        setattr(auth, "_auth_store_lock", lock)
+        spec = importlib.util.spec_from_file_location("antigravity_auth._lock_test_storage", storage.__file__)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"hermes_cli.auth": auth}):
+            spec.loader.exec_module(module)
+        return module
+
+    def test_available_process_lock_failure_preserves_auth_bytes(self):
+        import fcntl
+
+        storage = self._storage_with_lock(threading.RLock())
+        path = get_auth_json_path()
+        for original in (None, b'{"providers":{"other":{"keep":true}}}'):
+            with self.subTest(existing=original is not None):
+                if original is not None:
+                    path.write_bytes(original)
+                with patch.object(fcntl, "flock", side_effect=OSError("available lock denied")):
+                    with self.assertRaisesRegex(OSError, "available lock denied"):
+                        storage.sync_token_to_auth_json("synthetic-access", "synthetic-refresh")
+                self.assertEqual(path.read_bytes() if path.exists() else None, original)
+
+    def test_hermes_factory_owns_same_path_lock_during_recursive_concurrent_writes(self):
+        import fcntl
+        from concurrent.futures import ThreadPoolExecutor
+
+        path = get_auth_json_path()
+        guard = threading.RLock()
+        local = threading.local()
+        entries, exits, writes = [], [], []
+
+        @contextlib.contextmanager
+        def factory(*, target_path):
+            self.assertEqual(target_path, path)
+            with guard:
+                depth = getattr(local, "depth", 0)
+                with open(target_path.with_suffix(".lock"), "a+b") as handle:
+                    if depth == 0:
+                        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    local.depth = depth + 1
+                    entry = (threading.get_ident(), local.depth)
+                    entries.append(entry)
+                    try:
+                        yield
+                    finally:
+                        exits.append(entry)
+                        local.depth = depth
+                        if depth == 0:
+                            fcntl.flock(handle, fcntl.LOCK_UN)
+
+        storage = self._storage_with_lock(factory)
+        original_replace = os.replace
+
+        def replace(src, dst):
+            self.assertGreater(getattr(local, "depth", 0), 0)
+            with open(path.with_suffix(".lock"), "a+b") as contender:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(contender, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            storage.get_active_token_from_auth_json()
+            writes.append(os.stat(src).st_mode & 0o777)
+            original_replace(src, dst)
+
+        with patch.object(storage.os, "replace", side_effect=replace):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(lambda i: storage.sync_token_to_auth_json(f"fixture-{i}", "synthetic-refresh"), range(4)))
+        self.assertEqual(writes, [0o600] * 4)
+        self.assertEqual(sorted(entries), sorted(exits))
+        self.assertEqual(len(entries), 7)  # First write has no previous auth file to read.
+        self.assertEqual(storage.get_active_token_from_auth_json()["refresh_token"], "synthetic-refresh")
+
+    def test_available_hermes_factory_failure_prevents_write(self):
+        def factory(*, target_path):
+            raise RuntimeError("available factory denied")
+
+        storage = self._storage_with_lock(factory)
+        with self.assertRaisesRegex(RuntimeError, "available factory denied"):
+            storage.sync_token_to_auth_json("synthetic-access", "synthetic-refresh")
+        self.assertFalse(get_auth_json_path().exists())
+
+    def test_direct_hermes_manager_exits_after_write_error(self):
+        events = []
+
+        class Manager:
+            def __enter__(self):
+                events.append("enter")
+
+            def __exit__(self, kind, value, traceback):
+                events.append(value)
+
+        storage = self._storage_with_lock(Manager())
+        failure = OSError("replace denied")
+        with patch.object(storage.os, "replace", side_effect=failure):
+            with self.assertRaises(OSError) as caught:
+                storage.sync_token_to_auth_json("synthetic-access", "synthetic-refresh")
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(events, ["enter", failure])
+        self.assertFalse(get_auth_json_path().exists())
+
+    def test_available_windows_process_lock_failure_prevents_write(self):
+        storage = self._storage_with_lock(threading.RLock())
+        original_import = builtins.__import__
+
+        def without_posix(name, *args, **kwargs):
+            if name == "fcntl":
+                raise ImportError("POSIX unavailable")
+            return original_import(name, *args, **kwargs)
+
+        def fail_lock(*args):
+            raise OSError("Windows lock denied")
+
+        windows = types.SimpleNamespace(LK_LOCK=1, LK_UNLCK=2, locking=fail_lock)
+        with patch.dict(sys.modules, {"msvcrt": windows}), patch("builtins.__import__", side_effect=without_posix):
+            with self.assertRaisesRegex(RuntimeError, "Windows lock denied"):
+                storage.sync_token_to_auth_json("synthetic-access", "synthetic-refresh")
+        self.assertFalse(get_auth_json_path().exists())
+
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.original_hermes_home = os.environ.get("HERMES_HOME")
