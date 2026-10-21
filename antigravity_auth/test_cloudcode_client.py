@@ -13,6 +13,54 @@ import antigravity_auth.cloudcode_client as cloudcode_client
 
 
 class TestAntigravityCloudCodeClient(unittest.TestCase):
+  def test_close_failure_preserves_state_and_can_retry(self):
+    with patch("antigravity_auth.cloudcode_client._wrap_antigravity_http_client", side_effect=lambda client: client):
+      backend = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200)), trust_env=False)
+      client = cloudcode_client.AntigravityCloudCodeClient(http_client=backend)
+      with patch.object(backend, "close", side_effect=OSError("backend close denied")):
+        with self.assertRaisesRegex(OSError, "backend close denied"):
+          client.close()
+      self.assertFalse(client.is_closed)
+      client.close()
+      client.close()
+      self.assertTrue(client.is_closed)
+
+  def test_sync_context_chains_body_error_when_close_fails(self):
+    body_error = ValueError("body failed")
+    with patch("antigravity_auth.cloudcode_client._wrap_antigravity_http_client", side_effect=lambda client: client):
+      backend = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200)), trust_env=False)
+      client = cloudcode_client.AntigravityCloudCodeClient(http_client=backend)
+      with patch.object(backend, "close", side_effect=OSError("backend close denied")):
+        with self.assertRaisesRegex(OSError, "backend close denied") as caught:
+          with client:
+            raise body_error
+      self.assertIs(caught.exception.__context__, body_error)
+      self.assertFalse(client.is_closed)
+      client.close()
+
+  def test_async_close_failure_and_context_error_chaining(self):
+    with patch("antigravity_auth.cloudcode_client._wrap_antigravity_http_client", side_effect=lambda client: client):
+      backend = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200)), trust_env=False)
+      sync = cloudcode_client.AntigravityCloudCodeClient(http_client=backend)
+      client = cloudcode_client.AsyncAntigravityCloudCodeClient(sync)
+
+      async def check():
+        body_error = ValueError("async body failed")
+        with patch.object(backend, "close", side_effect=OSError("backend close denied")):
+          with self.assertRaisesRegex(OSError, "backend close denied"):
+            await client.close()
+          self.assertFalse(client.is_closed)
+          with self.assertRaisesRegex(OSError, "backend close denied") as caught:
+            async with client:
+              raise body_error
+          self.assertIs(caught.exception.__context__, body_error)
+          self.assertFalse(client.is_closed)
+        await client.close()
+        await client.close()
+        self.assertTrue(client.is_closed)
+
+      asyncio.run(check())
+
   def test_wrap_antigravity_http_client_warns_when_interceptor_wrap_fails(self):
     client = httpx.Client()
     try:
